@@ -1,0 +1,12 @@
+# Fase 0-3: EDA, labeler, evaluacion. Instalar con:
+#   pip install -r requirements.txt
+pandas
+numpy
+scikit-learn
+pytest
+pydicom
+matplotlib
+jupyterlab
+
+# Fase 4 en adelante (backbone de imagen) anade aqui cuando toque, no antes:
+#   torch, torchvision, monai, timm, snorkel

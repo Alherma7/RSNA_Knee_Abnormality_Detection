@@ -1,0 +1,29 @@
+# Entorno virtual
+venv/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Datos de la competicion: nunca commitear DICOM/imagenes reales.
+# Los notebooks de referencia descargados SI se versionan (son texto,
+# pequenos, y documentan de donde salen las decisiones del plan).
+data/raw/*
+!data/raw/_reference_kernels/
+data/processed/*
+!data/processed/.gitkeep
+
+# Checkpoints y artefactos generados: pueden pesar GBs.
+models/*
+!models/.gitkeep
+outputs/*
+!outputs/.gitkeep
+
+# SO / editor
+.DS_Store
+Thumbs.db
+.vscode/
