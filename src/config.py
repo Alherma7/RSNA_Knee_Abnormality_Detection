@@ -1,21 +1,40 @@
-"""Paths, constants, and shared settings for the RSNA Knee project."""
+"""Paths, constants, and shared settings for the RSNA Knee project.
 
+Dataset size note: the full competition dataset is ~0.5 TB of DICOM
+files, which does not fit comfortably alongside everything else on the
+local disk (~515 GB free at project start). Heavy work (Fases 1+, image
+loading, training) runs in Kaggle Notebooks against the dataset already
+mounted at _KAGGLE_INPUT_DIR; only a small local subset (the gold-labeled
+studies, for prototyping/tests) is expected under DATA_RAW_DIR. See
+README.md Next steps.
+"""
+
+import os
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DATA_RAW_DIR = PROJECT_ROOT / "data" / "raw"
 DATA_PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
 MODELS_DIR = PROJECT_ROOT / "models"
 OUTPUTS_DIR = PROJECT_ROOT / "outputs"
 
+# Kaggle Notebooks mount competition data read-only under
+# /kaggle/input/competitions/<slug>/ (confirmed 2026-08-16 on a live
+# kernel — /kaggle/input/<slug>/, without "competitions/", does not
+# exist for this competition) and set KAGGLE_KERNEL_RUN_TYPE; detect
+# that to pick up the full dataset there instead of expecting it to
+# have been downloaded locally.
+_KAGGLE_INPUT_DIR = Path("/kaggle/input/competitions/rsna-knee-abnormality-detection")
+ON_KAGGLE = "KAGGLE_KERNEL_RUN_TYPE" in os.environ
+DATA_RAW_DIR = _KAGGLE_INPUT_DIR if ON_KAGGLE else PROJECT_ROOT / "data" / "raw"
+
 RANDOM_STATE = 42
 CV_FOLDS = 5
 
-# Confirmed from the reviewed reference notebooks (pilkwang/rsna-knee-
-# baseline-v1 and prvsiyan/rsna-knee-read-the-report-then-the-knee) —
-# verify against the official data dictionary once train_labels.csv is
-# downloaded, since these were read from a third party's description of
-# the schema, not the raw file itself.
+# Verified 2026-08-16 against the official Kaggle "Dataset Description"
+# (pasted by the user from the competition data tab) — content and order
+# confirmed to match the third-party reference notebooks. Canonical
+# snake_case names used throughout this codebase; see
+# OFFICIAL_LABEL_COLUMNS below for the raw train.csv header spelling.
 FINDINGS = [
     "acl_injury",
     "mcl_injury",
@@ -31,6 +50,28 @@ FINDINGS = [
     "fracture",
 ]
 
+# Maps each FINDINGS entry to its exact column header in train.csv, per
+# the official Dataset Description. Use to rename columns on load
+# (src.data.load_gold_labels) rather than hardcoding the raw headers
+# elsewhere.
+OFFICIAL_LABEL_COLUMNS = {
+    "acl_injury": "ACL",
+    "mcl_injury": "MCL",
+    "medial_meniscus_tear": "Medial Meniscus",
+    "lateral_meniscus_tear": "Lateral Meniscus",
+    "oa_medial_compartment": "Medial OA",
+    "oa_lateral_compartment": "Lateral OA",
+    "oa_patellofemoral_compartment": "PF OA",
+    "effusion": "Effusion",
+    "synovitis": "Synovitis",
+    "bakers_cyst": "Baker's",
+    "bone_contusion": "Contusion",
+    "fracture": "Fracture",
+}
+
+# Official Dataset Description spells these "Sagittal", "Coronal",
+# "Axial" (train_series.csv::Anatomical_Plane) — lowercase when
+# comparing/joining against this tuple.
 MRI_PLANES = ("sagittal", "coronal", "axial")
 
 # Both reference notebooks report reports.csv text in up to 9 languages,

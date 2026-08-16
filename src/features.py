@@ -17,9 +17,19 @@ def normalize_physical_scale(pixel_array: np.ndarray, pixel_spacing_mm: float,
 
     Both reference notebooks note that DICOM pixel spacing varies across
     studies, so a fixed-pixel resize hands the model images whose
-    physical scale differs by several times. A feature narrower than
-    ~2 pixels after resize does not survive — resize by physical
-    millimetres covered, not raw pixel count.
+    physical scale differs by several times. Measured (notebooks/
+    01_eda_dicom.ipynb, section F, 2026-08-16 kernel run, 165 series
+    from 30 sample studies): PixelSpacing ranges 0.137-0.703 mm/pixel,
+    a 5.14x max/min ratio, confirming the claim on this corpus — not
+    dramatically different by plane (0.33-0.35 mm mean across
+    sagittal/coronal/axial), so the variation is per-study/protocol, not
+    per-plane. Row and column spacing were identical on every sampled
+    series (isotropic in-plane). SliceThickness ranged 0.6-5.0 mm
+    (median 3.0); SpacingBetweenSlices was present on 151/165 series
+    (missing on 14) — fall back to SliceThickness or derive spacing from
+    consecutive SliceLocation values when it's absent. A feature
+    narrower than ~2 pixels after resize does not survive — resize by
+    physical millimetres covered, not raw pixel count.
     """
     raise NotImplementedError("Fill in once DICOM loading (src.data) works.")
 
@@ -32,6 +42,11 @@ def normalize_laterality(pixel_array: np.ndarray, is_right_knee: bool) -> np.nda
     relative to the body's midline, which falls on different sides of the
     image depending on which knee was scanned. Both reference notebooks
     treat this as a required normalization, not an optional augmentation.
+
+    `is_right_knee` can be read directly from the DICOM `Laterality` tag
+    (confirmed present, notebooks/01_eda_dicom.ipynb section D,
+    2026-08-16 kernel run) rather than inferred — src/data.py's loader
+    should surface it per series instead of guessing from other fields.
     """
     raise NotImplementedError("Fill in once laterality metadata is loaded.")
 
