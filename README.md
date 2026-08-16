@@ -1,4 +1,5 @@
 # RSNA Knee Abnormality Detection
+<img width="559" height="280" alt="header" src="https://github.com/user-attachments/assets/1d5f97a3-e23f-4966-9797-75a20c2ff4fa" />
 
 Detectar 12 hallazgos clinicos en RM de rodilla multiplanar, entrenando
 con un subconjunto pequeno de estudios con etiqueta oficial ("gold") y
