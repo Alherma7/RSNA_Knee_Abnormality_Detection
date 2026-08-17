@@ -1,8 +1,14 @@
 """Feature/representation construction: 2.5D slice triplets per plane.
 
-Source: Dive into Deep Learning, ch. 8 (Modern CNNs — fine-tuning) and
-ch. 14 (Computer Vision — image augmentation, fine-tuning in practice);
-also both reviewed reference notebooks (pilkwang/rsna-knee-baseline-v1,
+Source: Dive into Deep Learning ch. 14 (Computer Vision) — specifically
+14.1 Image Augmentation and 14.2 Fine-Tuning, verified against the actual
+book text 2026-08-17 (see docs/superpowers/specs/2026-08-17-fase4-
+baseline-cnn-design.md). Corrects an earlier citation in this docstring
+that pointed to ch. 8 ("Modern Convolutional Neural Networks") for
+fine-tuning — checked against the book's real table of contents: ch. 8
+covers classic architectures (AlexNet, VGG, ResNet, ...), not
+fine-tuning, which is entirely in 14.2. Also both reviewed reference
+notebooks (pilkwang/rsna-knee-baseline-v1,
 prvsiyan/rsna-knee-read-the-report-then-the-knee), which use [n-gap, n,
 n+gap] slice triplets through a shared backbone, and flag two
 preprocessing steps as decisive rather than optional (below).
