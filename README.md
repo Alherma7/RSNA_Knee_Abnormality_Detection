@@ -195,15 +195,79 @@ entrada del modelo en inferencia.
       para el chequeo fallo en encontrar un estudio "sin ningun
       hallazgo" (los 58 gold tienen al menos 1 positivo), asi que no
       hubo contraste visual positivo-vs-negativo real. Con ambos bugs
-      descartados, la explicacion mas probable es que el baseline es
-      deliberadamente limitado: un solo corte central de un solo plano
-      por estudio, sin contexto multi-plano — si el hallazgo no cae en
-      ese corte exacto, es invisible para el modelo. Pendiente: revision
-      del usuario del notebook completo antes de graduar nada a `src/`.
+      descartados, la hipotesis en ese momento fue que el baseline era
+      deliberadamente limitado (un solo corte, un solo plano) — la
+      auditoria de abajo encontro que ademas habia bugs reales sin
+      relacion con esa limitacion arquitectonica.
+
+- **Auditoria independiente y correccion de la Fase 4 (2026-08-18):**
+      un agente (Opus, modo lectura) audito notebooks 00-05, `src/` y
+      `tests/` en busca de errores antes de dar el 0.574 por bueno.
+      Encontro 4 bugs P0 en el pipeline de imagen, los 3 primeros
+      corregidos y re-verificados contra los 58 estudios gold reales en
+      Kaggle:
+      (1) `normalize_laterality` volteaba el eje equivocado — en un
+      corte sagital, medial/lateral es el eje *fuera* de plano (a lo
+      largo de la serie), no uno de los dos ejes del propio corte, asi
+      que `np.fliplr` no normalizaba nada real y en cambio espejaba
+      anterior/posterior para toda rodilla derecha. Verificado con datos
+      reales (`ImageOrientationPatient` + `ImagePositionPatient` de 8
+      estudios gold, mezcla L/R): la orientacion del escaner es identica
+      entre L y R, pero `SliceLocation` ascendente significa
+      lateral→medial para R y medial→lateral para L — direcciones
+      opuestas. Fix real: invertir el **orden de la lista de cortes**
+      (no los pixeles) segun `Laterality`, en `load_series_slices`.
+      (2) el 0.574 reportado era el **maximo** de val AUC a lo largo de
+      las epocas del mismo fold que decidia el early stopping —
+      seleccion y evaluacion sobre los mismos datos. Medido directamente
+      de las trazas del barrido de `weight_decay`: optimismo medio
+      +0.042, del mismo orden que el margen reportado sobre el azar
+      (+0.074). Fix: presupuesto de epocas fijado de antemano (8, sin
+      re-elegir por fold), sin seleccion de checkpoint por val, se
+      reporta la **ultima** epoca; `torch.manual_seed(42)` anadido.
+      (3) sin normalizacion de intensidad — `uint16` crudo de DICOM
+      directo a un EfficientNet-B0 preentrenado en ImageNet, sin
+      reescalar. Fix: `pydicom.pixels.apply_voi_lut` (VOI LUT real del
+      DICOM, `WindowCenter`/`WindowWidth` confirmados presentes) con
+      fallback a percentiles 0.5-99.5 si faltaran, seguido de
+      reescalado a [0,1].
+      (4) el experimento de augmentation de la Fase 4 original estaba
+      roto por el mismo motivo que (3): `ColorJitter` sobre un tensor
+      con valores en cientos saturaba casi todos los pixeles a 1.0 via
+      el clamp interno de torchvision — la conclusion "augmentation no
+      ayuda" no estaba respaldada. Con el pipeline ya corregido se
+      volvio a probar (arreglando de paso que `RandomAffine`/
+      `ColorJitter` sobre un batch entero sacaban un solo sorteo
+      aleatorio para las 8 imagenes en vez de uno por imagen): macro
+      ROC-AUC 0.516 (std 0.035) vs. 0.532 sin augmentation — **augmentation
+      sigue sin ayudar, esta vez confirmado sin el bug de por medio**.
+      Las 58 series se reprocesaron con los fixes (1)+(3): 58/58 sin
+      errores, shape uniforme (3, 371, 371). Re-entrenamiento con el fix
+      (2) aplicado: macro ROC-AUC 3-fold **0.532 (std 0.021)** — sigue
+      ganando a 0.5, por un margen mas delgado y creible que el 0.574
+      original (~0.042 de esa diferencia era sesgo de seleccion, casi
+      exactamente lo medido). El overfitting severo persiste igual
+      (train AUC 0.95-0.98 en los 3 folds) pese a la intensidad ya
+      normalizada, confirmando que el techo es arquitectonico (un solo
+      corte de un solo plano por estudio), no los bugs corregidos aqui.
+      **La Fase 4 se cierra con este resultado.** Nada de esto esta
+      graduado a `src/` todavia — `src/features.py::normalize_laterality`
+      sigue siendo `NotImplementedError`; la graduacion depende de que
+      el usuario valide el notebook completo de punta a punta.
+      Nota aparte: durante esta auditoria se puso en duda brevemente la
+      autenticidad de `data/raw/_reference_kernels/{rsna-knee-baseline-v1,
+      rsna-knee-read-the-report-then-the-knee}.ipynb` (ambos anadidos en
+      el commit inicial del repo, antes de la fecha en que README decia
+      que se habian descargado, y con texto identico entre si pese a ser
+      supuestamente de autores distintos) — el usuario confirmo que son
+      reales, se mantiene la cita tal cual en RESOURCES.md.
 
 - [x] Investigado (2026-08-17) si un backbone mas potente resuelve el
-      techo visto en la Fase 4, o si es un problema de cuanta
-      informacion se usa por estudio. Conclusion, con fuentes (ver
+      techo visto en la Fase 4 (con el numero de entonces, 0.574 —
+      corregido a 0.532 el 2026-08-18, ver entrada de auditoria arriba;
+      la conclusion de esta investigacion no cambia), o si es un
+      problema de cuanta informacion se usa por estudio. Conclusion, con
+      fuentes (ver
       RESOURCES.md, entradas MRNet y RadImageNet): **no es el tamano
       del backbone**. MRNet (Bien et al. 2018) logra AUC 0.937-0.965
       con un backbone mas simple (AlexNet) que el nuestro
@@ -221,15 +285,126 @@ entrada del modelo en inferencia.
       multi-plano de `src/model.py` (Fase 6) sobre cambiar de backbone
       en la Fase 4.
 
+- [x] **Probado el pooling multi-plano MIL (2026-08-18)**, adelantando
+      parte de la Fase 6 para verificar con datos propios (no solo citas)
+      si la prediccion de MRNet/RadImageNet se cumple a esta escala.
+      Diseno: 1 tripete 2.5D por plano (sagital+coronal+axial, no todos
+      los cortes como MRNet) por estudio, backbone compartido, max-pool
+      de features entre los 3 planos antes de la cabeza. De paso
+      corregido un tercer eje de lateralidad no cubierto por el fix de
+      sagital: en coronal y axial, medial/lateral SI es un eje dentro
+      del plano (columna de imagen = eje x del paciente, verificado con
+      `ImageOrientationPatient` real en 16 estudios, 8 por plano,
+      mezcla L/R) — ahi el fix correcto es voltear pixeles (`np.fliplr`
+      condicionado a `Laterality == "L"`), lo contrario que en sagital.
+      Se sumo tambien EMA de pesos del modelo (decay=0.9, mas bajo que
+      el 0.9-0.9999 tipico de vision porque solo hay ~40 pasos de
+      entrenamiento en total con este dataset — un decay alto dejaria
+      el EMA casi congelado en la inicializacion) y evaluacion sobre 3
+      seeds x 3 folds en vez de 1 sola corrida, para no confundir ruido
+      de fold con senal real (la Fase 4 corregida ya habia mostrado
+      ruido intra-fold del mismo orden que el efecto medido).
+      **Resultado: sin ganancia clara.** Macro ROC-AUC medio (9
+      corridas): 0.530 (std 0.048) sin EMA vs. 0.532 (1 sola corrida)
+      del baseline de un plano — estadisticamente indistinguible. Con
+      EMA: 0.549 (std 0.041), una mejora pequena y verosimil pero al
+      limite de lo que 9 corridas pueden confirmar con fiabilidad.
+      Hallazgo mas revelador que el numero en si: **el fold 1 sale
+      sistematicamente mas alto que fold 0/2 en las 3 seeds** (0.59-0.63
+      vs. 0.48-0.55) — que estudios caen en que fold pesa mas que
+      cualquier cambio de arquitectura probado, con n=58 y 3 folds. El
+      overfitting tampoco cambio (train AUC 0.94-0.96 igual con MIL que
+      con un plano): si triplicar las vistas por estudio no reduce el
+      overfitting ni sube el val AUC, el cuello de botella no es cuantas
+      vistas ve el modelo por estudio, es cuantos estudios tiene para
+      entrenar (38-40 por fold). MRNet junta multi-plano *y* todos los
+      cortes de la serie *y* (con toda probabilidad) muchos mas estudios
+      de entrenamiento que nuestros 58 gold — replicar solo la parte
+      arquitectonica sin mas datos tiene retorno limitado. Confirma con
+      evidencia propia (no solo la cita) priorizar la Fase 5 (sumar los
+      4,349 estudios weak) sobre seguir afinando arquitectura contra los
+      mismos 58 gold. Codigo de este experimento vive solo en
+      `notebooks/04_baseline_cnn.ipynb` (celdas corridas en Kaggle,
+      2026-08-18) — nada graduado a `src/model.py` todavia, dado el
+      resultado neutro.
+
+- [x] **Arreglado el bug de negacion del labeler (2026-08-18)**, antes
+      de escalarlo a los 4,349 estudios weak en la Fase 5. Dos fixes
+      relacionados en `src/labelers.py`: (1) `_clauses()` ahora separa
+      frases aunque no haya espacio tras `.;!?` (15.4% de los 4,407
+      informes, 677, corren hallazgos pegados tipo "acl tear.mcl
+      normal."); (2) nueva `_negation_applies()` — una negacion solo
+      veta `finding` si su argumento local (el texto que gobierna, antes
+      o despues del cue segun sea predicado o pre-nominal) menciona la
+      propia anatomia o patologia de ese hallazgo, no solo "esta en
+      algun sitio de la misma frase". Proceso real, no lineal: un primer
+      intento trocaba tambien por coma para separar "ACL is torn but PCL
+      is intact" en dos piezas independientes — funcionaba para ese caso
+      pero rompia el patron contrario, muy comun en este corpus en los 2
+      idiomas: nombrar la estructura una vez y seguir describiendola tras
+      una coma sin repetir el nombre ("menisco medial ... conservada, sin
+      signos de rotura", "no effusion, synovitis, or bone contusion
+      identified") — medido: macro ROC-AUC en gold bajo de 0.688 a 0.674
+      con el split por coma, revertido. La version final solo trocea en
+      `but`/`pero`/`aunque`/`although` (limites seguros) y usa
+      `_negation_applies()` para el resto. Resultado en gold: **0.686**
+      (vs. 0.688 original, diferencia despreciable — 10 de 11 celdas que
+      cambiaron pasaron de "negativo correcto" a "abstencion", no a un
+      error; 1 se corrigio de verdad). El bug real (falso negativo
+      confiado en frases compuestas) apenas se nota en gold por la alta
+      tasa de abstencion, pero es justo lo que habria contaminado las
+      etiquetas de los 4,349 weak sin este fix. 6 tests nuevos en
+      `tests/test_labelers.py` (16 en total), incluida una limitacion
+      documentada y aceptada (no arreglada): dos clausulas totalmente
+      independientes unidas solo por coma sin conjuncion ("radial tear of
+      the medial meniscus, the lateral meniscus is normal") no se separan
+      de forma fiable — arreglarlo con split-por-coma reintroduce la
+      regresion de las listas coordinadas.
+
+- [x] **Fase 5 — mezclar gold+weak con GroupKFold (2026-08-18)**,
+      validado en `notebooks/04b_gold_weak_groupkfold.ipynb` (corrido en
+      local contra los 4,407 estudios reales, sin falta de Kaggle/GPU) y
+      graduado a `src/`: `src/labelers.py::report_group_key()` (hash
+      SHA-256 de una normalizacion que colapsa todo el whitespace,
+      distinta de `_normalize()` porque esta ultima preserva saltos de
+      linea a proposito para `_clauses()` — reusar `_normalize()` aqui
+      subconto: 50 grupos/192 estudios en vez de los 54/206 reales,
+      corregido) y `src/data.py::load_training_labels()` (ademas gradua
+      de paso `load_reports()`/`load_gold_labels()`, que seguian siendo
+      `NotImplementedError`). Verificado exacto contra `data/raw/`: 54
+      grupos duplicados / 206 estudios / 1 plantilla compartida
+      gold-weak (coincide al digito con la Fase 2); `GroupKFold(n_splits=
+      CV_FOLDS)` sobre los 4,407 estudios agrupados por plantilla, 0
+      grupos repartidos entre folds; gold distribuido 16/11/14/8/9 por
+      fold (sin estratificar — a este tamano de muestra ya no hace falta
+      el `MultilabelStratifiedKFold` que si hacia falta en el CV de solo
+      58 estudios de la Fase 4, y estratificar una mezcla de 0/1 duros y
+      0.5 de abstencion no esta bien definido de todas formas); tabla
+      combinada con 0 discrepancias entre las filas gold y las columnas
+      oficiales de `train.csv` (nunca se pasan por el labeler). 8 tests
+      nuevos (4 en `tests/test_labelers.py` para `report_group_key`, 4 en
+      `tests/test_data.py`, con CSVs sinteticos en vez de depender del
+      `data/raw/train.csv` real para que sean hermeticos). `src/data.py`
+      sigue con `load_dicom_series`/`build_dicom_cache`/
+      `load_series_metadata` como `NotImplementedError` — la carga de
+      DICOM de la Fase 4 sigue sin graduar, es un trabajo aparte.
+
 ## Next steps
 
-- [ ] Revisar `notebooks/04_baseline_cnn.ipynb` completo y decidir que
-      (si algo) gradua a `src/data.py`/`src/features.py`/`src/model.py`,
-      con sus tests correspondientes.
-- [ ] Fase 5 — mezclar gold+weak, `GroupKFold` por hash del informe
-      (`src/labelers.py::report_group_key`), no solo por estudio.
+- [ ] Revisar `notebooks/04_baseline_cnn.ipynb` completo (ya con los
+      fixes de lateralidad/intensidad/fuga de metrica del 2026-08-18) y
+      decidir que (si algo) gradua a `src/data.py`/`src/features.py`/
+      `src/model.py`, con sus tests correspondientes — incluyendo tests
+      de regresion para los 2 bugs reales encontrados en la auditoria
+      (orden de cortes por lateralidad, fuga de seleccion de metrica).
 - [ ] Fase 6 — `notebooks/05_ensemble_calibration.ipynb`: ensembling
-      multi-plano/backbone con `src/evaluate.py::rank_blend()`.
+      multi-plano/backbone con `src/evaluate.py::rank_blend()`. El
+      experimento MIL 3-plano del 2026-08-18 (ver arriba) no gano con
+      solo 58 gold y 1 triplete/plano — si se retoma tras la Fase 5 (mas
+      estudios de entrenamiento), probar tambien mas cortes por plano
+      (varios tripletes o todos los cortes con max-pool), mas cerca del
+      diseno real de MRNet, antes de descartar el pooling multi-plano
+      por completo.
 - [ ] Fase 7 — optimizacion de inferencia para el limite de 9h sin
       internet (pesos empaquetados como Kaggle Dataset propio).
 - [ ] Fase 8 — `src/train.py::run()` end-to-end, `outputs/submission.csv`.

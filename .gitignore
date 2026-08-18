@@ -27,3 +27,7 @@ outputs/*
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Imagenes reales de pacientes generadas al inspeccionar notebooks fuera
+# de data/raw/ (nunca commitear).
+sample_triplets.png

@@ -26,8 +26,10 @@ funcion concreta de este repo.
   (PLOS Medicine, 2018) / stanfordmlgroup.github.io/projects/mrnet
   Why: precedente academico mas directo para este problema (clasificar
   multiples hallazgos de rodilla desde MRI con pocos datos). Investigado
-  2026-08-17 tras el resultado debil de la Fase 4 (macro AUC 0.574,
-  overfitting severo): MRNet agrega TODOS los cortes de cada serie
+  2026-08-17 tras el resultado debil de la Fase 4 (macro AUC 0.574 en su
+  momento, corregido a 0.532 el 2026-08-18 tras una auditoria — ver esa
+  entrada mas abajo; la conclusion de esta comparacion no cambia,
+  overfitting severo en ambos casos): MRNet agrega TODOS los cortes de cada serie
   (max-pooling) a traves de los 3 planos (axial+coronal+sagital), no un
   solo corte central de un solo plano como nuestro baseline — y logra
   AUC 0.937 (anormalidad)/0.965 (ACL)/0.847 (menisco) con un backbone
@@ -277,6 +279,88 @@ funcion concreta de este repo.
   rather than receiving a wrong confident label, a known and accepted gap
   for now, not a silent one. `report_group_key()` was not part of this
   graduation — still `NotImplementedError`, scoped for Fase 5.
+- **Negation-scoping fix in `src/labelers.py`** (local, 2026-08-18,
+  validated against the same 58-row gold set as the original graduation)
+  Why: the 2026-08-18 audit (see the Fase 4 audit entry above) found
+  that `label_report()`'s clause-level negation check let a negation cue
+  anywhere in a clause veto a pathology assertion anywhere else in that
+  same clause — e.g. "tear of the medial meniscus without effusion" got
+  a wrong confident 0.0 for the tear, because "without" and "medial
+  meniscus" shared a clause. Measured impact before fixing: at least 53
+  studies across 6 findings, a conservative lower bound over the full
+  weak corpus (barely visible on the small, high-abstention gold gate,
+  but a real training-label contaminant at the 4,349-study scale this
+  fix is for). Fixed with a new `_negation_applies()` check: a negation
+  cue only counts against `finding` if the text it plausibly governs
+  (after a pre-nominal cue like "without"/"no"/"sin", or before a
+  predicate cue like "... is normal/intact") itself names `finding`'s
+  own anatomy or pathology term. An earlier version of the fix also
+  split clauses on every comma to separate compound sentences like "The
+  ACL is torn but the PCL is intact" — this worked for that pattern but
+  broke a different, more common one in this same corpus: naming a
+  structure once and continuing to describe it across a comma without
+  repeating the name ("menisco medial ... conservada, sin signos de
+  rotura"; "no effusion, synovitis, or bone contusion identified" — a
+  shared negation over a coordinated list). Measured directly: comma-
+  splitting dropped gold macro ROC-AUC from 0.688 to 0.674, a real
+  regression, reverted in favor of splitting only on the unambiguous
+  `but`/`pero`/`aunque`/`although` boundary plus the local-argument
+  check. Final result: gold macro ROC-AUC 0.686 (vs. 0.688 originally —
+  negligible difference; 10 of 11 changed cells went from a correct
+  negative to an abstention, not to a wrong answer, and 1 was a genuine
+  fix). One case is a documented, accepted gap rather than a silent one:
+  two fully independent clauses joined only by a bare comma (no
+  conjunction, no repeated anatomy word) aren't reliably scoped apart,
+  since fixing that specific pattern would reintroduce the coordinated-
+  list regression. 6 new tests in `tests/test_labelers.py` (16 total),
+  including one that documents that accepted gap explicitly rather than
+  asserting a result the fix doesn't actually guarantee.
+- **`report_group_key()` implementation and validation** (local,
+  2026-08-18, real data)
+  Why: implements the function this project had cited as a Fase 5
+  prerequisite since Fase 3 (was `NotImplementedError`). Hashes a
+  normalization that collapses ALL whitespace (spaces/tabs/newlines
+  alike), not `_normalize()` (which deliberately keeps newlines for
+  `_clauses()`'s sentence splitting) — reusing `_normalize()` was tried
+  first and measured to under-count real duplicate templates that only
+  differ by line-wrap position: 50 groups/192 studies instead of the
+  real 54/206 against `data/raw/train.csv`. The corrected version
+  reproduces notebooks/02_eda_reports.ipynb section E exactly: 54
+  duplicate groups, 206 studies, 1 template shared between a gold and a
+  weak study. 4 new tests in `tests/test_labelers.py`.
+- **scikit-learn, `sklearn.model_selection.GroupKFold`** (scikit-learn
+  docs) — adopted 2026-08-18 for the Fase 5 combined-dataset split
+  Why: plain group-only splitting (not `MultilabelStratifiedKFold`,
+  cited above for the Fase 4 58-gold CV) grouped by
+  `report_group_key()`, so a report template never spans train/val —
+  confirmed necessary in notebooks/02_eda_reports.ipynb section E (1
+  template shared between a gold and a weak study). No stratification is
+  attempted at this scale: the small-sample class-imbalance risk that
+  motivated `MultilabelStratifiedKFold` for 58 gold studies (as few as 9
+  MCL positives) is far less pressing across 4,407 studies, and
+  stratifying a mix of hard 0/1 gold labels and graded 0.5-abstention
+  weak labels isn't well-defined without picking an arbitrary threshold
+  first. Validated in notebooks/04b_gold_weak_groupkfold.ipynb against
+  the real train.csv: `GroupKFold(n_splits=CV_FOLDS)` (`CV_FOLDS=5`,
+  `src/config.py`, unused since it was added until now) over all 4,407
+  studies gives 0 report-template groups split across folds and a
+  reasonable (not perfectly even, since ungrouped) gold-per-fold spread
+  of 16/11/14/8/9.
+- **`src.data.load_training_labels()` graduation** (local, 2026-08-18,
+  validated in notebooks/04b_gold_weak_groupkfold.ipynb against the real
+  train.csv)
+  Why: builds the one-row-per-study training table this project needs
+  for Fase 8's `src/train.py::run()` — official 0/1 labels for the 58
+  gold studies (never re-derived from the labeler), graded weak labels
+  from `label_reports()` for the other 4,349, plus the `GroupKFold` fold
+  assignment above. Graduating this also finally implemented
+  `load_reports()`/`load_gold_labels()`, both `NotImplementedError`
+  since the project skeleton. Verified against real data: 4,407 rows out
+  of 4,407 studies, 0 discrepancies between the gold rows here and
+  `train.csv`'s own official columns. 4 new tests in
+  `tests/test_data.py`, using small synthetic CSVs (not the real
+  train.csv) so they stay hermetic — the real-data numbers are already
+  proven in the notebook and don't need re-proving in a unit test.
 - **notebooks/04_baseline_cnn.ipynb kernel run** (Kaggle, 2026-08-17,
   built and run cell-by-cell, not written upfront — see
   docs/superpowers/specs/2026-08-17-fase4-baseline-cnn-design.md
@@ -311,7 +395,146 @@ funcion concreta de este repo.
   0.574 (std 0.052), beating the 0.5 baseline — but every fold's train
   macro AUC reaches 0.95-0.99 (fold 2: 0.999), so this is a real but
   fragile generalization signal from a near-memorized training set, not
-  evidence of a robust model at this sample size.
+  evidence of a robust model at this sample size. **Superseded
+  2026-08-18** — see the audit entry below; this 0.574 included ~0.042
+  of metric-selection optimism plus two real preprocessing bugs.
+- **Opus general-purpose audit of notebooks 00-05 + `src/` + `tests/`**
+  (2026-08-18, read-only, dispatched before graduating anything from
+  Fase 4)
+  Why: found 4 P0 bugs in the Fase 4 CNN pipeline, independent of the
+  "single slice, single plane" architectural limitation already
+  identified via MRNet (above). (1) `normalize_laterality` flipped the
+  wrong axis for sagittal images (`np.fliplr` mirrors the in-plane
+  anterior/posterior axis; medial/lateral is the out-of-plane axis for
+  a sagittal series) — actively corrupting orientation consistency
+  rather than fixing it. (2) the reported 0.574 was `max(val AUC over
+  epochs)` on the same fold used for early stopping — measured
+  optimism +0.042 from the weight_decay sweep's own per-epoch traces,
+  comparable to the entire margin over the 0.5 baseline. (3) no
+  intensity normalization — raw DICOM `uint16` fed directly into an
+  ImageNet-pretrained backbone. (4) the augmentation experiment was
+  invalidated by (3): `ColorJitter` on unnormalized values in the
+  hundreds saturates via torchvision's internal float clamp
+  (`bound=1.0`), so the "augmentation doesn't help" conclusion had no
+  valid evidence behind it.
+- **Fix verification runs** (Kaggle, 2026-08-18, real data, cell-by-cell
+  per the project's build convention) — closed out the audit above
+  Why: (1) confirmed the laterality bug and derived the correct fix by
+  reading `ImageOrientationPatient`/`ImagePositionPatient` on 8 real
+  gold studies (mixed L/R): scanner orientation is identical between L
+  and R, but ascending `SliceLocation` means lateral→medial for a right
+  knee and medial→lateral for a left knee — opposite directions — so
+  the fix reverses the **slice list order** per `Laterality`, not
+  pixels; (2) `pydicom.pixels.apply_voi_lut` applied for intensity
+  normalization (`WindowCenter`/`WindowWidth` confirmed present on the
+  sample study), percentile 0.5-99.5 fallback if absent, rescaled to
+  [0,1]; reprocessed all 58 gold studies with both fixes: 0 errors,
+  uniform (3, 371, 371) shape; (3) retrained with a fixed 8-epoch
+  budget, no val-based checkpoint selection, last-epoch score reported,
+  `torch.manual_seed(42)` — macro ROC-AUC 3-fold **0.532 (std 0.021)**,
+  still beats 0.5 but by a thinner, more credible margin; train AUC
+  still reaches 0.95-0.98 per fold even with intensity normalized,
+  confirming the ceiling is architectural, not these bugs; (4)
+  augmentation retried on the fixed pipeline (plus fixing that
+  `RandomAffine`/`ColorJitter` on a whole batched tensor draws one
+  random transform for all 8 images instead of one per image): macro
+  ROC-AUC 0.516 (std 0.035) — still does not beat no-augmentation,
+  this time a trustworthy negative result. Fase 4 closed at 0.532;
+  nothing graduated to `src/` yet.
+- **MIL multi-plane pooling experiment** (Kaggle, 2026-08-18, real data,
+  cell-by-cell) — tested whether MRNet's/the breast-cancer writeup's
+  multi-view finding (both cited above) transfers to this project's 58
+  gold studies before committing to it for Fase 6
+  Why: found a third laterality axis the Fase 4 fix didn't cover — in
+  coronal/axial (unlike sagittal), medial/lateral *is* an in-plane axis
+  (image column = patient x, verified via `ImageOrientationPatient` on
+  16 real studies, 8 per plane, mixed L/R), so the correct fix there is
+  a pixel flip (`np.fliplr` gated on `Laterality == "L"`), the opposite
+  of the sagittal fix. Built a MIL model (1 triplet/plane x 3 planes,
+  shared backbone, max-pool over plane features before the head) plus a
+  manually-implemented EMA (decay=0.9, deliberately low — vision
+  defaults of 0.999+ assume thousands of training steps; this dataset
+  gives only ~40 total, so a high decay would leave the shadow weights
+  almost frozen at initialization) and evaluated over 3 seeds x 3 folds
+  instead of one run, given the Fase 4 correction already showed
+  epoch-to-epoch noise of the same order as the effects being measured.
+  Result: no clear win — macro ROC-AUC 0.530 (std 0.048, no EMA) vs.
+  0.532 for the single-plane baseline (statistically indistinguishable);
+  0.549 (std 0.041) with EMA, a plausible but barely-confirmable small
+  gain from 9 runs. More informative than the mean: fold 1 scored
+  systematically higher than folds 0/2 across all 3 seeds (0.59-0.63 vs.
+  0.48-0.55) — at n=58 with 3 folds, which studies land in which fold
+  dominates over any architecture change tested. Train AUC still reached
+  0.94-0.96 with MIL, same as single-plane — tripling the views per
+  study didn't reduce overfitting or raise val AUC, so the bottleneck is
+  training-study count (38-40/fold), not view count per study. MRNet
+  combines multi-plane pooling *and* every slice in each series *and*
+  (most likely) many more training studies than this project's 58 gold
+  — replicating only the architectural piece without more data has
+  limited return. Own-data confirmation (not just the cited papers) that
+  Fase 5 (adding the 4,349 weak-labeled studies) is higher-value than
+  further architecture tuning against the same 58 gold studies. Lives
+  only in `notebooks/04_baseline_cnn.ipynb` Kaggle cell outputs
+  (2026-08-18); nothing graduated to `src/model.py`.
+- **pydicom, `pydicom.pixels.apply_voi_lut`** (docs.pydicom.org) —
+  adopted 2026-08-18 while fixing finding (3) above
+  Why: implements the DICOM standard VOI LUT windowing (PS3.3
+  C.11.2.1.2.1) directly from a dataset's `WindowCenter`/`WindowWidth`,
+  used instead of hand-rolling the windowing math. Looked at
+  `dangnh0611/kaggle_rsna_breast_cancer`'s own `src/utils/windowing.py`
+  (1st-place RSNA breast cancer solution, github.com/dangnh0611/
+  kaggle_rsna_breast_cancer — shallow-cloned locally only to review,
+  then removed: 62MB with vendored YOLOX/timm/albumentations and its
+  own nested `.git`, too heavy to keep versioned here unlike the two
+  small knee reference notebooks) first — it reimplements the same
+  PS3.3 formula by hand, which confirmed VOI LUT windowing as the
+  standard approach for DICOM intensity normalization, but pydicom's
+  built-in function is used in this repo's code instead of copying
+  that implementation. That repo's own laterality handling was also
+  checked (`grep -i flip` across its `src/utils/`) and found to do no
+  pixel-level laterality normalization at all — no direct precedent
+  there for this project's sagittal medial/lateral bug (finding 1
+  above). The author's own writeup (Kaggle discussion 392449, "1st
+  place solution", pasted by the user 2026-08-18) has more transferable
+  lessons than the raw code at our scale — see the entry below.
+- **dangnh0611, "1st place solution" writeup** (RSNA Screening
+  Mammography Breast Cancer Detection, Kaggle discussion 392449,
+  pasted in full by the user 2026-08-18) — read for technique ideas,
+  not code (the underlying pipeline: YOLOX ROI detection, 4x
+  Convnext-small at 2048x1024, 5 external datasets, multi-day
+  multi-GPU training, is far beyond this project's scale of 58 gold
+  studies on a single Kaggle GPU)
+  Why: (1) section 3.6/4.4's OOF table is a second, independent,
+  empirical confirmation (after MRNet, cited above) that aggregating
+  multiple views per subject matters more than backbone choice: single
+  cropped-image AUC 0.873-0.896 vs. groupby-mean/max AUC 0.892-0.943 on
+  the same folds — same direction as MRNet's finding, different
+  competition and modality, reinforces prioritizing multi-plane pooling
+  in Fase 6 over more Fase 4 tuning; (2) "soft positive label" (using
+  0.8-0.9 instead of a hard 1.0 for a positive whose evidence is
+  per-study rather than per-image, i.e. some images of a positive
+  breast don't show the cancer) is the same asymmetric-confidence
+  problem this project already has in `src/labelers.py::label_report()`
+  (weak labels are graded floats near 0.5 when the labeling function
+  abstains, not forced to a hard 0/1) — the writeup is independent
+  validation that this graded-label design is the right shape for
+  weak/uncertain supervision, not just this project's own choice;
+  (3) their EfficientNet-without-EMA experiments show the same failure
+  mode seen in this project's Fase 4 (`overfits quickly... AUC drops
+  with longer training` under a high positive ratio) — Convnext with
+  drop_rate=0.5 + EMA + a *lower* positive upsampling ratio trained
+  more stably; worth trying in a future Fase 4/6 revision if the
+  architecture-limited baseline is revisited (model EMA is not
+  currently used anywhere in `src/model.py`); (4) section 3.1 tracks
+  multiple metrics because "the competition metric is not stable and
+  hard to track" at their scale — the same instability this project
+  measured directly in the Fase 4 audit (2026-08-18, epoch-to-epoch val
+  AUC noise of the same order as the effect being measured), independent
+  confirmation that a single point-estimate AUC is not enough evidence
+  on a small validation fold; (5) confirms `apply_voi_lut(prefer_lut =
+  False)` (this project's Fase 4 fix, above) as a real technique used on
+  one of their external datasets (VinDr-Mammo), not something invented
+  for this project.
 
 ## Comparable projects
 

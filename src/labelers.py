@@ -35,6 +35,7 @@ overfitting to it, per structuring-ml-projects's negative-result logging
 guidance.
 """
 
+import hashlib
 import re
 import unicodedata
 
@@ -95,13 +96,82 @@ def _unwrap(text: str) -> str:
     return "\n".join(out)
 
 
-_SENT_SPLIT_RE = re.compile(r"(?<=[.;!?])\s+|\n+")
+_SENT_SPLIT_RE = re.compile(r"(?<=[.;!?])\s*|\n+")
 
 
 def _clauses(text: str) -> "list[str]":
-    """Normalize, unwrap, then split into sentence/line-level clauses."""
+    """Normalize, unwrap, then split into sentence/line-level clauses.
+
+    Audit finding (2026-08-18): the previous pattern required whitespace
+    after `.;!?` to split, so reports with no space after a period (e.g.
+    "acl tear.mcl normal.medial meniscus tear.") — 15.4% of the 4,407
+    reports (677), measured directly — collapsed multiple findings into
+    one clause, which then fed the negation-scoping bug below (a
+    negation for one finding could veto an unrelated finding's
+    assertion in the same run-together "clause"). Splitting
+    unconditionally after `.;!?` (whitespace or not) fixes this; the
+    empty pieces this can produce are already filtered out below.
+    """
     norm = _normalize(_unwrap(text))
     return [c.strip() for c in _SENT_SPLIT_RE.split(norm) if c and c.strip()]
+
+
+def _sub_clauses(clause: str) -> "list[str]":
+    """Split a clause at coordinating conjunctions a negation can't cross.
+
+    Audit finding (2026-08-18): `label_report()` used to let any
+    negation cue anywhere in a clause veto a pathology assertion
+    anywhere else in that same clause — wrong for compound sentences
+    like "The ACL is torn but the PCL is intact", where "intact" negates
+    the PCL, not the ACL. `but`/`pero`/`aunque`/`although` reliably
+    introduce a genuinely separate assertion in this corpus (checked
+    against the real gold reports below), so splitting there is safe.
+
+    A comma is NOT a safe split point here, unlike those conjunctions:
+    an earlier version of this fix also split on `,`, which broke a
+    pattern that is common in this corpus in both languages — naming a
+    structure once and continuing to describe it across a comma without
+    repeating the name (e.g. "menisco medial ... conservada, sin signos
+    de rotura" or "no effusion, synovitis, or bone contusion
+    identified"). Splitting there stranded the anatomy mention in one
+    piece and the negation/pathology in another with no anatomy cue of
+    its own, turning correct votes into wrong abstentions — measured
+    directly: macro ROC-AUC on the 58-row gold set dropped from 0.688 to
+    0.674 with comma-splitting in place, a real regression, reverted.
+    Cross-entity negation scoping for cases that need finer-than-clause
+    granularity (like the effusion example in `label_report()`'s
+    docstring) is handled by `_negation_applies()` instead, which checks
+    what a negation cue's local argument actually names rather than
+    guessing from punctuation alone.
+    """
+    return [s.strip() for s in _SUB_CLAUSE_SPLIT_RE.split(clause) if s and s.strip()]
+
+
+def _negation_applies(sub_clause: str, anatomy_re: "re.Pattern", pathology_re: "re.Pattern") -> bool:
+    """Whether some negation cue in `sub_clause` actually negates `finding`.
+
+    A negation cue only counts against `finding` if the text it plausibly
+    governs — everything after a pre-nominal cue ("no", "without", "sin",
+    ...) or everything before a predicate cue ("... is normal/intact",
+    ...) — itself names `finding`'s own anatomy or pathology. This is
+    what lets "tear of the medial meniscus without effusion" correctly
+    NOT negate the meniscus tear (the argument of "without" is
+    "effusion", naming a different finding entirely) while still
+    correctly negating "menisco medial ... conservada, sin signos de
+    rotura" (the argument of "sin" names this finding's own pathology
+    word, "rotura", even without repeating the anatomy word) — see
+    `_sub_clauses()` for why this replaces punctuation-based splitting
+    for this specific ambiguity instead of comma-splitting.
+    """
+    for m in _NEGATION_SCOPE_RE.finditer(sub_clause):
+        arg = sub_clause[m.end():]
+        if anatomy_re.search(arg) or pathology_re.search(arg):
+            return True
+    for m in _NEGATION_PREDICATE_RE.finditer(sub_clause):
+        arg = sub_clause[:m.start()]
+        if anatomy_re.search(arg) or pathology_re.search(arg):
+            return True
+    return False
 
 
 # Shared cartilage/joint-degeneration cues for the three osteoarthritis
@@ -190,21 +260,27 @@ FINDING_LEXICON = {
 
 # Negation/normality cues, pooled across English and Spanish (matches the
 # no-language-routing rule above — a report is never pre-classified by
-# language before cues are tested). Co-occurrence within the same clause
-# as an anatomy cue is what scopes a negation to that finding; this is a
-# clause-level check, not a directional one (the reviewed prvsiyan
-# notebook's "directional negation" refinement — scoping by which side of
-# the anatomy mention the negation falls on — is a candidate improvement
-# if a future validation run shows clause-level scoping misfiring on
-# multi-finding sentences, not implemented here).
-_NEGATION_CUES = [
-    r"\bno\b", r"\bnot\b", r"\bwithout\b", r"\babsent\b", r"\bnormal\b",
-    r"\bintact\b", r"\bunremarkable\b", r"within normal limit",
+# language before cues are tested). Split into two groups by where the
+# cue sits relative to what it negates (see _sub_clauses() docstring):
+# pre-nominal cues precede the negated noun ("no effusion") and start a
+# new sub-clause scope; predicate cues follow the subject they negate
+# ("ACL is intact") and must NOT start a new scope, or they'd get split
+# away from the anatomy mention they belong to.
+_NEGATION_SCOPE_CUES = [
+    r"\bno\b", r"\bnot\b", r"\bwithout\b", r"\babsent\b",
     r"no evidence of", r"no sign", r"negative for",
     r"\bsin\b", r"\bausen", r"\bninguna\b", r"\bnegativ",
-    r"dentro de (los )?l[i0]mites normales", r"no se (observa|evidencia|aprecia)",
+    r"no se (?:observa|evidencia|aprecia)",
 ]
+_NEGATION_PREDICATE_CUES = [
+    r"\bnormal\b", r"\bintact\b", r"\bunremarkable\b", r"within normal limit",
+    r"dentro de (los )?l[i0]mites normales",
+]
+_NEGATION_CUES = _NEGATION_SCOPE_CUES + _NEGATION_PREDICATE_CUES
 _NEGATION_RE = re.compile("|".join(_NEGATION_CUES))
+_NEGATION_SCOPE_RE = re.compile("|".join(_NEGATION_SCOPE_CUES))
+_NEGATION_PREDICATE_RE = re.compile("|".join(_NEGATION_PREDICATE_CUES))
+_SUB_CLAUSE_SPLIT_RE = re.compile(r"\s+but\s+|\s+pero\s+|\s+aunque\s+|\s+although\s+")
 
 _COMPILED_LEXICON = {
     finding: (re.compile("|".join(cues["anatomy"])), re.compile("|".join(cues["pathology"])))
@@ -215,38 +291,42 @@ _COMPILED_LEXICON = {
 def label_report(report_text: str, finding: str) -> float:
     """Return a soft label in [0, 1] for one finding from one report.
 
-    Per-clause rule: a clause counts as evidence for `finding` only if it
-    matches that finding's `anatomy` cue (i.e. it's actually talking
-    about the relevant structure). Within such a clause, a negation cue
-    (`_NEGATION_RE`) wins over a pathology cue if both are present —
-    validated as the right priority in notebooks/03_labeler_validation.ipynb
-    section D-E: the opposite priority (pathology wins) scored effusion
-    at AUC 0.438, *below* random, because "no effusion" contains the word
-    "effusion" itself (anatomy == pathology cue list for entity-only
-    findings), so a naive "pathology mention present -> positive" rule
-    voted every negated mention as positive.
+    Per-sub-clause rule: a sub-clause (see `_sub_clauses()` — a clause
+    split further at `but`/`pero`/`aunque`/`although`) counts as evidence
+    for `finding` only if it matches that finding's `anatomy` cue (i.e.
+    it's actually talking about the relevant structure). Within such a
+    sub-clause, a negation cue wins over a pathology cue if the negation
+    actually applies to `finding` (see `_negation_applies()`) — negation
+    winning over pathology when both are present was validated as the
+    right priority in notebooks/03_labeler_validation.ipynb section D-E:
+    the opposite priority (pathology wins) scored effusion at AUC 0.438,
+    *below* random, because "no effusion" contains the word "effusion"
+    itself (anatomy == pathology cue list for entity-only findings), so
+    a naive "pathology mention present -> positive" rule voted every
+    negated mention as positive.
 
-    A study with no clause matching `finding`'s anatomy cue at all
+    A study with no sub-clause matching `finding`'s anatomy cue at all
     returns 0.5 (abstain), not 0.0 — per Data Programming (Ratner et al.
     2016)/Snorkel, a labeling function's failure mode should be silence,
     not a confident wrong answer, since silence is what a caller
     combining several labeling functions can choose to down-weight. If
-    any matching clause votes positive, the report is labeled positive
-    (an assertion anywhere outweighs normal findings elsewhere, e.g. a
-    multi-compartment report normal everywhere except one torn
-    meniscus). Otherwise, if any matching clause votes negative, the
+    any matching sub-clause votes positive, the report is labeled
+    positive (an assertion anywhere outweighs normal findings elsewhere,
+    e.g. a multi-compartment report normal everywhere except one torn
+    meniscus). Otherwise, if any matching sub-clause votes negative, the
     report is labeled negative.
     """
     anatomy_re, pathology_re = _COMPILED_LEXICON[finding]
     votes = []
     for clause in _clauses(report_text):
-        if not anatomy_re.search(clause):
-            continue
-        if _NEGATION_RE.search(clause):
-            votes.append(0.0)
-        elif pathology_re.search(clause):
-            votes.append(1.0)
-        # else: anatomy mentioned with neither cue -> ambiguous, no vote.
+        for sub in _sub_clauses(clause):
+            if not anatomy_re.search(sub):
+                continue
+            if _negation_applies(sub, anatomy_re, pathology_re):
+                votes.append(0.0)
+            elif pathology_re.search(sub):
+                votes.append(1.0)
+            # else: anatomy mentioned with neither cue -> ambiguous, no vote.
     if not votes:
         return 0.5
     return 1.0 if max(votes) == 1.0 else 0.0
@@ -283,5 +363,33 @@ def report_group_key(report_text: str) -> str:
     groups across 206 of 4,407 studies (4.7%), and at least one template
     shared between a gold study and a weak (report-only) study — so this
     grouping protects gold-vs-weak splits too, not only weak-vs-weak.
+
+    Deliberately does NOT reuse `_normalize()`: that function collapses
+    only spaces/tabs, not newlines, because `_clauses()` needs newlines
+    intact as a clause boundary. This function needs the opposite —
+    two studies sharing a template but wrapped at different line widths
+    must hash the same — so it collapses ALL whitespace (spaces, tabs,
+    newlines alike) to match the exact normalization
+    notebooks/02_eda_reports.ipynb section E used to measure the 54
+    duplicate groups above (case+NFKD-diacritic fold, then any
+    whitespace run to a single space). Reusing `_normalize()` here
+    instead was tried and measured to under-count: 50 groups / 192
+    studies instead of 54 / 206, against the real `data/raw/train.csv`
+    (2026-08-18) — the missing 4 groups/14 studies were templates that
+    only differed by line-wrap position.
+
+    A missing/non-string report still needs a key so every row can be
+    grouped: this normalizes to `""` for non-string input, so every
+    missing-report row lands in the same group as every other one —
+    fine here since `Report` was confirmed non-null on all 4,407 rows in
+    `train.csv` (Fase 1); `test.csv` has no `Report` column at all, but
+    this function is never called at inference time (see module
+    docstring).
     """
-    raise NotImplementedError("Fill in once load_reports() is available.")
+    if not isinstance(report_text, str):
+        normalized = ""
+    else:
+        t = unicodedata.normalize("NFKD", report_text.lower())
+        t = "".join(ch for ch in t if not unicodedata.combining(ch))
+        normalized = re.sub(r"\s+", " ", t).strip()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
