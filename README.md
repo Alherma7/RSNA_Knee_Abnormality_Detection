@@ -389,6 +389,38 @@ entrada del modelo en inferencia.
       `load_series_metadata` como `NotImplementedError` — la carga de
       DICOM de la Fase 4 sigue sin graduar, es un trabajo aparte.
 
+- [x] **Submission de calibracion (2026-08-24)**: primera submission real
+      a la competicion, para saber si el CV local de 58 gold significa
+      algo en el leaderboard de verdad. `05c_gold_weak_checkpoint_train.ipynb`
+      reentreno `gold_weak`/seed=42 (5 folds, mismos hiperparametros que
+      `05b`) guardando checkpoints -- reprodujo el 0.5659 de `05b` exacto
+      (delta +0.0000), confirmando que el reentrenamiento con guardado de
+      pesos no introduce drift. `06_submission_inference.ipynb` hizo
+      inferencia en vivo sobre el test oculto (preprocesado DICOM propio,
+      ensemble de los 5 folds) -- el pipeline de preprocesado de
+      `05a_weak_dicom_preprocess.ipynb` nunca se sincronizo a este repo y
+      se confirmo perdido tambien en Kaggle, asi que las celdas de
+      lateralidad/normalizacion de intensidad se reconstruyeron de la
+      prosa del README y se validaron aparte
+      (`06b_preprocessing_validation.ipynb`) contra los 58 triples gold
+      ya conocidos de `triplets_knee`: la direccion del fix de
+      lateralidad salio perfecta (58/58 en orden directo, no invertido)
+      pero queda un residuo de intensidad sin explicar en ~10/58 estudios
+      (MAE moderado, no correlacionado con lateralidad; 3 hipotesis
+      descartadas -- corte, gap, PhotometricInterpretation/RescaleSlope)
+      que se acepto como limitacion conocida en vez de seguir
+      persiguiendolo (ver memoria `feedback_match_debugging_effort_to_stakes`).
+      **Resultado: leaderboard real 0.596**, por encima del CV local de
+      este mismo modelo (0.5659 en `05c`, 0.5711 media-3-seeds en `05b`)
+      -- confirma que el CV de 58 gold es razonablemente informativo, no
+      esta desconectado del metric real. Contraste importante encontrado
+      en discussion de la competicion (post `735304`): top scorers
+      publicos reportan 0.887-0.94+ con DINOv2/ensembles/mas datos por
+      estudio/etiquetas via LLM -- brecha real y grande (0.596 vs
+      0.89-0.94) que motiva revisar arquitectura, representacion de
+      imagen (mas cortes/secuencias por estudio) y calidad de las weak
+      labels antes de seguir iterando solo contra el CV local.
+
 ## Next steps
 
 - [ ] Revisar `notebooks/04_baseline_cnn.ipynb` completo (ya con los
