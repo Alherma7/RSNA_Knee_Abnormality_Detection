@@ -1,24 +1,47 @@
 """Unit tests for src/data.py.
 
-Only load_reports(), load_gold_labels(), and load_training_labels() are
-graduated so far (2026-08-18, validated against the real train.csv in
+load_reports(), load_gold_labels(), load_training_labels(),
+geometric_slice_order(), and load_dicom_series() are graduated so far.
+The first three: 2026-08-18, validated against the real train.csv in
 notebooks/04b_gold_weak_groupkfold.ipynb — see that notebook and
-RESOURCES.md for the real-data numbers these unit tests don't repeat).
-load_dicom_series, build_dicom_cache, and load_series_metadata remain
-NotImplementedError until Fase 4's ad-hoc DICOM-loading notebook code is
-itself graduated (see README.md Next steps) — no tests for those yet.
+RESOURCES.md for the real-data numbers these unit tests don't repeat.
+geometric_slice_order/load_dicom_series: 2026-08-25, validated against
+the 58 real gold studies in notebooks/01v2_slice_ordering.ipynb (A0b) —
+41/58 real series were pure reversals under the old bare-SliceLocation
+sort; that real-corpus number isn't re-proven here either, only the
+sorting function's own logic on known synthetic inputs.
+build_dicom_cache and load_series_metadata remain NotImplementedError
+until Fase 4's ad-hoc DICOM-loading notebook code is itself graduated
+(see README.md Next steps) — no tests for those yet.
 
-These tests use small synthetic CSVs (not the real train.csv) so they
-stay hermetic and fast; the real-data numbers (4,407 rows, 58 gold, 54
-duplicate-template groups, 0 template leakage across folds) are already
-validated in the notebook above and don't need re-proving here.
+These tests use small synthetic CSVs/DICOM files (not the real
+train.csv or real DICOM data) so they stay hermetic and fast; the
+real-data numbers are already validated in the notebooks above and
+don't need re-proving here.
 """
 
+from pydicom.dataset import FileDataset, FileMetaDataset
+from pydicom.uid import ExplicitVRLittleEndian, generate_uid
+
 from src.config import FINDINGS, OFFICIAL_LABEL_COLUMNS
-from src.data import load_gold_labels, load_reports, load_training_labels
+from src.data import geometric_slice_order, load_dicom_series, load_gold_labels, load_reports, load_training_labels
 from src.labelers import report_group_key
 
 LABEL_COLS = list(OFFICIAL_LABEL_COLUMNS.values())
+
+
+def _write_dicom(path, **tags):
+    """Write a minimal but real, readable DICOM file with only the given tags."""
+    file_meta = FileMetaDataset()
+    file_meta.MediaStorageSOPClassUID = generate_uid()
+    file_meta.MediaStorageSOPInstanceUID = generate_uid()
+    file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+
+    ds = FileDataset(str(path), {}, file_meta=file_meta, preamble=b"\0" * 128)
+    for key, value in tags.items():
+        setattr(ds, key, value)
+    ds.save_as(path, enforce_file_format=True)
+    return path
 
 
 def _write_train_csv(tmp_path, rows):
@@ -102,3 +125,89 @@ def test_load_training_labels_never_splits_a_shared_report_template_across_folds
     assert report_group_key(shared_text) == report_group_key(shared_text)
     assert combined.loc["gold1", "fold"] == combined.loc["weak1", "fold"]
     assert (combined["fold"] >= 0).all()
+
+
+# Standard axial-like orientation: row=[1,0,0], col=[0,1,0] -> normal=[0,0,1],
+# so the geometric key reduces to the z-component of ImagePositionPatient.
+_AXIAL_IOP = [1, 0, 0, 0, 1, 0]
+
+
+def test_geometric_slice_order_sorts_by_ipp_projected_onto_iop_normal(tmp_path):
+    high = _write_dicom(tmp_path / "high.dcm", ImageOrientationPatient=_AXIAL_IOP,
+                         ImagePositionPatient=[0, 0, 30.0])
+    low = _write_dicom(tmp_path / "low.dcm", ImageOrientationPatient=_AXIAL_IOP,
+                        ImagePositionPatient=[0, 0, 10.0])
+    mid = _write_dicom(tmp_path / "mid.dcm", ImageOrientationPatient=_AXIAL_IOP,
+                        ImagePositionPatient=[0, 0, 20.0])
+
+    ordered = geometric_slice_order([high, low, mid])
+
+    assert ordered == [low, mid, high]
+
+
+def test_geometric_slice_order_overrides_a_reversed_slice_location(tmp_path):
+    # SliceLocation deliberately encodes the opposite direction from the real
+    # geometric position -- exactly the 71%-of-58-studies scenario measured
+    # in notebooks/01v2_slice_ordering.ipynb. The geometric key must win.
+    a = _write_dicom(tmp_path / "a.dcm", ImageOrientationPatient=_AXIAL_IOP,
+                      ImagePositionPatient=[0, 0, 10.0], SliceLocation=90.0)
+    b = _write_dicom(tmp_path / "b.dcm", ImageOrientationPatient=_AXIAL_IOP,
+                      ImagePositionPatient=[0, 0, 20.0], SliceLocation=80.0)
+
+    ordered = geometric_slice_order([a, b])
+
+    assert ordered == [a, b]
+
+
+def test_geometric_slice_order_falls_back_to_slice_location_when_geometric_tags_missing(tmp_path):
+    high = _write_dicom(tmp_path / "high.dcm", SliceLocation=30.0)
+    low = _write_dicom(tmp_path / "low.dcm", SliceLocation=10.0)
+
+    ordered = geometric_slice_order([high, low])
+
+    assert ordered == [low, high]
+
+
+def test_geometric_slice_order_falls_back_to_instance_number_when_slice_location_missing(tmp_path):
+    high = _write_dicom(tmp_path / "high.dcm", InstanceNumber=3)
+    low = _write_dicom(tmp_path / "low.dcm", InstanceNumber=1)
+
+    ordered = geometric_slice_order([high, low])
+
+    assert ordered == [low, high]
+
+
+def test_geometric_slice_order_falls_back_to_input_order_when_all_tags_missing(tmp_path):
+    first = _write_dicom(tmp_path / "first.dcm")
+    second = _write_dicom(tmp_path / "second.dcm")
+
+    ordered = geometric_slice_order([first, second])
+
+    assert ordered == [first, second]
+
+
+def test_geometric_slice_order_falls_back_when_orientation_is_degenerate(tmp_path):
+    # row_dir parallel to col_dir -> zero-norm cross product -> not usable
+    # as a geometric key, must fall back to SliceLocation instead.
+    degenerate_iop = [1, 0, 0, 1, 0, 0]
+    high = _write_dicom(tmp_path / "high.dcm", ImageOrientationPatient=degenerate_iop,
+                         ImagePositionPatient=[0, 0, 99.0], SliceLocation=30.0)
+    low = _write_dicom(tmp_path / "low.dcm", ImageOrientationPatient=degenerate_iop,
+                        ImagePositionPatient=[0, 0, 1.0], SliceLocation=10.0)
+
+    ordered = geometric_slice_order([high, low])
+
+    assert ordered == [low, high]
+
+
+def test_load_dicom_series_lists_and_orders_files_from_the_series_directory(tmp_path):
+    series_dir = tmp_path / "train_series" / "study1" / "series1"
+    series_dir.mkdir(parents=True)
+    _write_dicom(series_dir / "b.dcm", ImageOrientationPatient=_AXIAL_IOP,
+                 ImagePositionPatient=[0, 0, 30.0])
+    _write_dicom(series_dir / "a.dcm", ImageOrientationPatient=_AXIAL_IOP,
+                 ImagePositionPatient=[0, 0, 10.0])
+
+    ordered = load_dicom_series(tmp_path, "study1", "series1", split="train")
+
+    assert [f.name for f in ordered] == ["a.dcm", "b.dcm"]

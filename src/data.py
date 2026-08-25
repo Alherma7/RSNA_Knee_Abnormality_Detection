@@ -11,7 +11,9 @@ See RESOURCES.md for the full citations and why each applies here.
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
+import pydicom
 from sklearn.model_selection import GroupKFold
 
 from src import config
@@ -34,43 +36,83 @@ def build_dicom_cache(raw_dir: Path, split: str = "train") -> Path:
     raise NotImplementedError("Fill in once the DICOM data is available.")
 
 
-def load_dicom_series(raw_dir: Path, study_id: str, series_id: str,
-                       split: str = "train") -> "list[Path]":
-    """Return one series' slices, ordered by physical slice position.
+def geometric_slice_order(files: "list[Path]") -> "list[Path]":
+    """Sort a series' DICOM files by physical position along the slice normal.
 
-    Do NOT sort by filename. The filename is the SOP Instance UID,
+    Primary key: ImagePositionPatient projected onto the normal of
+    ImageOrientationPatient (cross(row_dir, col_dir)) — consistent
+    across series because both tags share DICOM's LPS patient coordinate
+    system. Falls back to SliceLocation, then InstanceNumber, then
+    input file order when the geometric tags are missing or degenerate
+    (zero-norm normal). Source: stevenleehans, this competition's
+    discussion 735304.
+
+    Do NOT sort by bare SliceLocation alone, which the prior version of
+    this docstring (and the now-obsolete 06/06b notebooks) recommended.
+    SliceLocation's sign is manufacturer/protocol-defined, not
+    guaranteed to point the same physical direction across series:
+    measured directly against this geometric method on all 58 real gold
+    studies (notebooks/01v2_slice_ordering.ipynb, A0b, 2026-08-25) — 41
+    of 58 (71%) were pure reversals (same slice set, opposite
+    direction), uncorrelated with gantry tilt (mean 9.2 vs 8.2 degrees
+    off-axis for mismatched vs. matched studies) or duplicate
+    SliceLocation values (0 found in either group).
+
+    Also do NOT sort by filename — the filename is the SOP Instance UID,
     assigned to be unique rather than ordered — replicated on 10 sample
     series (notebooks/01_eda_dicom.ipynb, section D, 2026-08-16 kernel
     run): rho(filename order, InstanceNumber) ranged -0.24 to 0.69,
     confirming filename order is not a reliable proxy for physical
-    order (matches both reference notebooks' rho ~ 0.01 finding).
+    order.
 
-    Order by SliceLocation, not by indexing ImagePositionPatient
-    yourself. InstanceNumber, ImagePositionPatient, and SliceLocation
-    all survive the official 86-tag allowlist (confirmed present on a
-    sample file; 64 named tags were populated there — the allowlist
-    caps what CAN appear, not every tag on every acquisition).
-    ImagePositionPatient is a 3D point whose varying axis depends on the
-    scan plane (sagittal/coronal/axial vary a different one of x/y/z) —
-    indexing a fixed component (e.g. [2], assuming "z") produced a
-    constant column (a scipy ConstantInputWarning) on a non-axial series
-    during this same EDA run. SliceLocation is the scalar DICOM already
-    computes by projecting onto the slice normal, so use that directly
-    instead of re-deriving the projection from ImageOrientationPatient.
+    Graduated 2026-08-25 from notebooks/01v2_slice_ordering.ipynb
+    (Cells 2-3), user-reviewed before promotion per this project's
+    notebook-to-src graduation rule.
+    """
+    records = []
+    for idx, f in enumerate(files):
+        ds = pydicom.dcmread(f, stop_before_pixels=True)
+        key = None
 
-    rho(InstanceNumber, SliceLocation) was exactly +-1.000 on all 10
-    sample series (same EDA run) — both encode the same physical order,
-    rank for rank, but the SIGN flips between series (5 of 10 were -1):
-    ascending InstanceNumber means ascending SliceLocation on some
-    series and descending on others, presumably per acquisition/scanner
-    convention. Pick one field (SliceLocation) and sort by it
-    consistently; do not mix ordering by InstanceNumber on some series
-    and SliceLocation on others expecting the same direction.
+        iop = getattr(ds, "ImageOrientationPatient", None)
+        ipp = getattr(ds, "ImagePositionPatient", None)
+        if iop is not None and ipp is not None and len(iop) == 6 and len(ipp) == 3:
+            row_dir = np.array(iop[0:3], dtype=float)
+            col_dir = np.array(iop[3:6], dtype=float)
+            normal = np.cross(row_dir, col_dir)
+            if np.linalg.norm(normal) > 1e-6:
+                key = float(np.dot(np.array(ipp, dtype=float), normal))
+
+        if key is None:
+            sl = getattr(ds, "SliceLocation", None)
+            if sl is not None:
+                key = float(sl)
+        if key is None:
+            inum = getattr(ds, "InstanceNumber", None)
+            if inum is not None:
+                key = float(inum)
+        if key is None:
+            key = float(idx)
+
+        records.append((key, f))
+
+    records.sort(key=lambda r: r[0])
+    return [f for _, f in records]
+
+
+def load_dicom_series(raw_dir: Path, study_id: str, series_id: str,
+                       split: str = "train") -> "list[Path]":
+    """Return one series' DICOM files, ordered by physical slice position.
 
     `split` selects train_series/ or test_series/ (see
-    build_dicom_cache).
+    build_dicom_cache) — inference needs the test_series/ tree, since
+    only `Report` is train-only, not the images. Ordering is
+    geometric_slice_order() — see that function's docstring for why bare
+    SliceLocation or filename order are not safe to sort by.
     """
-    raise NotImplementedError("Fill in once the DICOM data is available.")
+    series_dir = raw_dir / f"{split}_series" / study_id / series_id
+    files = sorted(series_dir.glob("*.dcm"))
+    return geometric_slice_order(files)
 
 
 def load_reports(raw_dir: Path) -> pd.DataFrame:
