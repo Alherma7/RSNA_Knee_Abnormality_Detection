@@ -1,4 +1,4 @@
-# Fase 0-3: EDA, labeler, evaluacion. Instalar con:
+# EDA, labeler, evaluation, notebook execution. Install with:
 #   pip install -r requirements.txt
 pandas
 numpy
@@ -8,5 +8,5 @@ pydicom
 matplotlib
 jupyterlab
 
-# Fase 4 en adelante (backbone de imagen) anade aqui cuando toque, no antes:
+# Add once real image-model training starts (A2/A3), not before:
 #   torch, torchvision, monai, timm, snorkel

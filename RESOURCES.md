@@ -1,120 +1,108 @@
 # Resources
 
-Una entrada por fuente. `Why` conecta la fuente con una decision o
-funcion concreta de este repo.
+One entry per source. `Why` connects the source to a specific decision
+or function in this repo.
 
 ## Papers / frameworks
 
 - **Data Programming: Creating Large Training Sets, Quickly** (Ratner
   et al., NeurIPS 2016) / Snorkel (snorkel.org, tutorial "Intro to
   labeling functions")
-  Why: weak supervision — combina las funciones de etiquetado de
-  `src/labelers.py::label_report()` (Fase 3) en una etiqueta
-  probabilistica, para los estudios sin etiqueta oficial.
+  Why: weak supervision — combines `src/labelers.py::label_report()`'s
+  labeling functions into a probabilistic label for studies without an
+  official one.
 - **MONAI documentation** (docs.monai.io)
-  Why: lectura DICOM y transforms de imagen medica (Fase 1,
-  `src/data.py`), evita reinventar resampling/windowing.
+  Why: DICOM reading and medical-image transforms (`src/data.py`),
+  avoids reinventing resampling/windowing.
 - **pydicom**
-  Why: inspeccion de headers/metadata DICOM cruda antes de cualquier
-  framework, para `notebooks/01_eda_dicom.ipynb`.
+  Why: raw DICOM header/metadata inspection ahead of any framework.
 - **Bergstra & Bengio, "Random Search for Hyper-Parameter Optimization"**
   (JMLR 2012)
-  Why: justifica random search sobre grid search en la Fase 6 (espacio
-  multi-hiperparametro del backbone + pooling).
+  Why: justifies random search over grid search for a multi-hyperparameter
+  space (backbone + pooling), once that tuning stage is reached.
 - **Bien et al., "Deep-learning-assisted diagnosis for knee magnetic
   resonance imaging: Development and retrospective validation of MRNet"**
   (PLOS Medicine, 2018) / stanfordmlgroup.github.io/projects/mrnet
-  Why: precedente academico mas directo para este problema (clasificar
-  multiples hallazgos de rodilla desde MRI con pocos datos). Investigado
-  2026-08-17 tras el resultado debil de la Fase 4 (macro AUC 0.574 en su
-  momento, corregido a 0.532 el 2026-08-18 tras una auditoria — ver esa
-  entrada mas abajo; la conclusion de esta comparacion no cambia,
-  overfitting severo en ambos casos): MRNet agrega TODOS los cortes de cada serie
-  (max-pooling) a traves de los 3 planos (axial+coronal+sagital), no un
-  solo corte central de un solo plano como nuestro baseline — y logra
-  AUC 0.937 (anormalidad)/0.965 (ACL)/0.847 (menisco) con un backbone
-  mas simple (AlexNet) que el nuestro (EfficientNet-B0). Confirma que la
-  limitacion de la Fase 4 es la cantidad de vista/informacion por
-  estudio, no el tamano del backbone — respalda priorizar el pooling
-  multi-plano de `src/model.py` (Fase 6) sobre cambiar de backbone.
+  Why: the most direct academic precedent for this problem (classifying
+  multiple knee findings from MRI with little data). Investigated
+  2026-08-17 after Fase 4's weak result: MRNet aggregates ALL slices per
+  series (max-pooling) across all 3 planes (axial+coronal+sagittal), not
+  a single central slice of a single plane like our baseline — and
+  reaches AUC 0.937 (abnormality)/0.965 (ACL)/0.847 (meniscus) with a
+  simpler backbone (AlexNet) than ours (EfficientNet-B0). Confirmed
+  Fase 4's limitation was view/information count per study, not backbone
+  size — supported prioritizing multi-plane pooling over backbone swaps
+  (later independently re-confirmed at this project's own scale, see the
+  MIL experiment entry below, and again by discussion 735304's ablation
+  in the 2026-08-25 reorientation).
 - **Mei et al., "RadImageNet: An Open Radiologic Deep Learning Research
   Dataset for Effective Transfer Learning"** (Radiology: Artificial
   Intelligence, 2022)
-  Why: investigado 2026-08-17 junto con MRNet. Preentrenar en 1.35M
-  imagenes radiologicas (CT/MRI/US) en vez de ImageNet da +4.5-4.8% de
-  AUC en datasets MRI pequenos, incluida clasificacion de rotura de ACL
-  y menisco especificamente — la ganancia se concentra justo en el
-  regimen de pocos datos en el que esta este proyecto. Candidato a
-  probar como backbone preentrenado alternativo a EfficientNet-B0/
-  ImageNet, mas fundamentado que simplemente agrandar el backbone.
+  Why: investigated 2026-08-17 alongside MRNet. Pretraining on 1.35M
+  radiology images (CT/MRI/US) instead of ImageNet gives +4.5-4.8% AUC on
+  small MRI datasets, including ACL/meniscus tear classification
+  specifically — the gain concentrates exactly in this project's
+  low-data regime. A candidate pretrained backbone (Tier B item B5 in
+  the current plan), more grounded than simply enlarging the backbone
+  (which a same-competition ablation later measured as a null — see
+  discussion 735304 entry above).
 - **Tan & Le, "EfficientNet: Rethinking Model Scaling for Convolutional
   Neural Networks"** (ICML 2019)
-  Why: backbone elegido para el baseline de la Fase 4
-  (`src/model.py::build_backbone`, EfficientNet-B0). Verificado
-  2026-08-17: ni Dive into Deep Learning ni Hands-On Machine Learning
-  ensenan EfficientNet en profundidad (D2L solo lo menciona de pasada
-  como ejemplo de Neural Architecture Search, citando este mismo paper;
-  Hands-On ML no lo menciona) — la eleccion de EfficientNet-B0 en si
-  cita el paper original, no esos libros. Los libros si respaldan los
-  fundamentos de CNN sobre los que se construye (ver entradas de D2L/
-  Hands-On ML abajo).
-- **Dive into Deep Learning, secciones 14.1 (Image Augmentation) y 14.2
-  (Fine-Tuning)** — verificado contra el texto real del libro
-  2026-08-17, no solo citado de memoria (ver
-  docs/superpowers/specs/2026-08-17-fase4-baseline-cnn-design.md)
-  Why: (1) 14.2 confirma fine-tunear el backbone en vez de congelarlo
-  para datasets pequenos (exactamente el caso de los 58 estudios gold),
-  y especifica la tecnica real — learning rate diferencial: tasa
-  pequena para los parametros preentrenados, tasa mas grande para la
-  capa de salida nueva (inicializada al azar) — mas precisa que "fine-
-  tunear todo por igual"; (2) 14.1 dice literalmente "Flipping the image
-  left and right usually does not change the category of the object" —
-  el propio libro asume que el flip horizontal es seguro solo cuando la
-  etiqueta no depende de la orientacion, lo que confirma por que NO usar
-  flip horizontal como augmentation en la Fase 4 (`normalize_laterality`
-  ya fija que lado es medial/lateral para 5 de los 12 hallazgos; un
-  flip horizontal aleatorio deshace esa normalizacion). Correccion de
-  paso: el docstring de `src/features.py` citaba antes "ch. 8" para
-  fine-tuning — el capitulo 8 real es "Modern Convolutional Neural
-  Networks" (arquitecturas clasicas: AlexNet, VGG, ResNet...), no
-  fine-tuning, que esta enteramente en el 14.2. Corregido en el
-  docstring.
-- **Hands-On Machine Learning with Scikit-Learn and TensorFlow, cap. 3
-  ("Classification"), seccion "Multilabel Classification"** (p. 100) —
-  verificado contra el texto real 2026-08-17
-  Why: confirma promediar una metrica de clasificacion binaria a traves
-  de varias etiquetas (macro-average) como tecnica valida para un
-  problema multilabel, con "weighted" (por soporte) como alternativa
-  nombrada — respalda que `src/evaluate.py::macro_roc_auc` (macro,
-  no ponderado, fijado por las reglas de la competicion en Fase 0) es
-  una eleccion de diseno documentada, no arbitraria.
+  Why: the backbone chosen for the Fase 4 baseline
+  (`src/model.py::build_backbone`, EfficientNet-B0). Verified 2026-08-17
+  that neither Dive into Deep Learning nor Hands-On Machine Learning
+  teaches EfficientNet in depth (D2L only mentions it in passing as a
+  Neural Architecture Search example, citing this same paper; Hands-On
+  ML doesn't mention it) — the EfficientNet-B0 choice itself cites the
+  original paper, not those books.
+- **Dive into Deep Learning, sections 14.1 (Image Augmentation) and 14.2
+  (Fine-Tuning)** — verified against the book's actual text, 2026-08-17,
+  not cited from memory
+  Why: (1) 14.2 confirms fine-tuning the backbone instead of freezing it
+  for small datasets (exactly the 58-gold-study case), and specifies the
+  real technique — differential learning rate: a small rate for
+  pretrained parameters, a larger rate for the new (randomly
+  initialized) output layer — more precise than "fine-tune everything
+  equally"; (2) 14.1 states literally "Flipping the image left and right
+  usually does not change the category of the object" — the book itself
+  assumes horizontal flip is safe only when the label doesn't depend on
+  orientation, confirming why Fase 4 does NOT use horizontal flip as
+  augmentation (`normalize_laterality` already fixes which side is
+  medial/lateral for 5 of the 12 findings; a random horizontal flip would
+  undo that normalization).
+- **Hands-On Machine Learning with Scikit-Learn and TensorFlow, ch. 3
+  ("Classification"), "Multilabel Classification" section** (p. 100) —
+  verified against the actual text, 2026-08-17
+  Why: confirms averaging a binary classification metric across several
+  labels (macro-average) as a valid technique for a multilabel problem,
+  naming "weighted" (by support) as the alternative — supports
+  `src/evaluate.py::macro_roc_auc` (macro, unweighted, fixed by the
+  competition's own rules) as a documented design choice, not an
+  arbitrary one.
 - **PyTorch docs, `torch.nn.BCEWithLogitsLoss`** (docs.pytorch.org,
-  fetched 2026-08-17) — cierra el hueco que quedaba sin fuente en la
-  entrada anterior
-  Why: fundamenta `pos_weight` en la Fase 4 (seccion 6) para compensar
-  el desbalance de clases por hallazgo (15.5%-60.3% de prevalencia,
-  Fase 3). Formula oficial: `pos_weight = n_negativos / n_positivos` de
-  la clase ("if a dataset contains 100 positive and 300 negative
-  examples..., pos_weight should be 300/100 = 3"); la propia
-  documentacion ilustra el parametro con un escenario multi-label
-  binario (`c` = numero de clases, `c>1` para multi-label) — coincide
-  exactamente con el problema de este proyecto (12 hallazgos, un logit
-  por hallazgo). `p_c > 1` aumenta recall, `p_c < 1` aumenta precision.
-- **Dive into Deep Learning, secciones 3.6.3 (Cross-Validation), 5.5.3-
-  5.5.4 (Early Stopping / Classical Regularization) y 5.6 (Dropout)** —
-  verificado 2026-08-17
-  Why: (1) 3.6.3 confirma K-fold cross-validation como la solucion
-  estandar precisamente cuando "training data is scarce" y no alcanza
-  para separar un validation set aparte — el caso de los 58 estudios
-  gold; (2) 5.5.4 nota algo no obvio: weight decay solo (regularizacion
-  L2) suele ser insuficiente en redes profundas para evitar que
-  interpolen el dataset, y sus beneficios "podrian solo tener sentido en
-  combinacion con el criterio de early stopping" — implica que la Fase 4
-  debe usar weight decay + early stopping juntos, no weight decay solo
-  como si bastara por si mismo; (3) 5.6 confirma dropout como tecnica de
-  regularizacion estandar, con 0.5 como valor ilustrativo en el ejemplo
-  del libro (un MLP, no un CNN — solo un punto de partida razonable, no
-  un valor prescriptivo para este problema).
+  fetched 2026-08-17)
+  Why: grounds `pos_weight` (Fase 4, later dropped — see Tier B item B2
+  in the current plan) for per-finding class imbalance (15.5%-60.3%
+  prevalence). Official formula: `pos_weight = n_negative / n_positive`
+  for the class; the docs illustrate the parameter with a multi-label
+  binary scenario (`c` = number of classes, `c>1` for multi-label) —
+  matches this project's exact problem shape (12 findings, one logit
+  per finding). `p_c > 1` raises recall, `p_c < 1` raises precision.
+- **Dive into Deep Learning, sections 3.6.3 (Cross-Validation), 5.5.3-
+  5.5.4 (Early Stopping / Classical Regularization), and 5.6 (Dropout)**
+  — verified 2026-08-17
+  Why: (1) 3.6.3 confirms K-fold cross-validation as the standard
+  solution precisely when "training data is scarce" and there isn't
+  enough to hold out a separate validation set — the 58-gold-study case;
+  (2) 5.5.4 notes something non-obvious: weight decay alone (L2
+  regularization) is often insufficient in deep networks to stop them
+  interpolating the dataset, and its benefits "may only make sense in
+  combination with the early stopping criterion" — implying weight decay
+  and early stopping should be used together, not weight decay alone;
+  (3) 5.6 confirms dropout as a standard regularization technique, with
+  0.5 as the book's own illustrative value (an MLP example, not a CNN —
+  only a reasonable starting point, not a prescriptive value for this
+  problem).
 
 - **Sechidis, Tsoumakas & Vlahavas, "On the Stratification of Multi-Label
   Data"** (ECML PKDD 2011) / `iterative-stratification` package
@@ -362,9 +350,8 @@ funcion concreta de este repo.
   train.csv) so they stay hermetic — the real-data numbers are already
   proven in the notebook and don't need re-proving in a unit test.
 - **notebooks/04_baseline_cnn.ipynb kernel run** (Kaggle, 2026-08-17,
-  built and run cell-by-cell, not written upfront — see
-  docs/superpowers/specs/2026-08-17-fase4-baseline-cnn-design.md
-  Section 12 for the full account)
+  built and run cell-by-cell — the notebook itself was retired in the
+  2026-08-25 cleanup, see git history before that commit for the file)
   Why: first real CNN baseline on the 58 gold studies. Applies Tan & Le
   2019 (EfficientNet-B0), D2L §14.2 (differential-LR fine-tuning) and
   §5.5-5.6 (dropout/weight-decay/early-stopping technique), PyTorch docs
@@ -538,51 +525,85 @@ funcion concreta de este repo.
 
 ## Comparable projects
 
-- **pilkwang/rsna-knee-baseline-v1** (Kaggle, descargado en
+- **pilkwang/rsna-knee-baseline-v1** (Kaggle, downloaded to
   `data/raw/_reference_kernels/rsna-knee-baseline-v1.ipynb`)
-  Why: define la metrica exacta (media no ponderada de 12 AUC), la
-  lista de los 12 hallazgos (`src/config.py::FINDINGS`), el gotcha de
-  orden fisico de cortes (rho ~ 0.01 si se ordena por nombre de
-  archivo — `src/data.py::load_dicom_series`), y que
-  `Fluid_Sensitive`/`Fat_Suppression` en `train_series.csv` coinciden
-  en todas las filas (no son dos ejes independientes en este dataset).
+  Why: defines the exact metric (unweighted mean of 12 AUCs), the list
+  of the 12 findings (`src/config.py::FINDINGS`), the physical
+  slice-order gotcha (rho ~0.01 if sorted by filename —
+  `src/data.py::load_dicom_series`), and that
+  `Fluid_Sensitive`/`Fat_Suppression` in `train_series.csv` agree on
+  every row (not two independent axes in this dataset).
 - **prvsiyan/rsna-knee-read-the-report-then-the-knee** (Kaggle,
-  descargado en
+  downloaded to
   `data/raw/_reference_kernels/rsna-knee-read-the-report-then-the-knee.ipynb`)
-  Why: confirma independientemente la metrica y los 12 hallazgos;
-  fundamenta el pooling por atencion por hallazgo sobre "slots" de
-  plano/secuencia (`src/model.py`) en vez de mean pooling; fundamenta
-  fine-tunear el encoder en vez de congelarlo; documenta el leak de
-  "shared reports" (informes plantilla identicos entre estudios) que
-  exige agrupar los folds por hash del texto del informe
-  (`src/labelers.py::report_group_key`, Fase 5); usa rank-blend en vez
-  de promediar probabilidades para el ensemble final
-  (`src/evaluate.py::rank_blend`).
-- **yashbishnoi98/rsna-knee-infer-v1** (Kaggle, citado dentro de
+  Why: independently confirms the metric and the 12 findings; grounds
+  per-finding attention pooling over plane/sequence "slots"
+  (`src/model.py`) instead of mean pooling; grounds fine-tuning the
+  encoder instead of freezing it; documents the "shared reports" leak
+  (identical template reports across studies) that requires grouping
+  folds by report-text hash (`src/labelers.py::report_group_key`); uses
+  rank-blend instead of averaging raw probabilities for the final
+  ensemble (`src/evaluate.py::rank_blend`).
+- **yashbishnoi98/rsna-knee-infer-v1** (Kaggle, cited inside
   prvsiyan/rsna-knee-read-the-report-then-the-knee)
-  Why: referencia de score alto (~0.903) entrenando con todos los
-  estudios solo-reporte (no solo los 58 gold) — apoya la Fase 5
-  (usar weak labels a escala, no solo gold).
+  Why: a high-score reference (~0.903) training on all report-only
+  studies (not just the 58 gold) — supported the original case for
+  using weak labels at scale, not just gold.
 - **blacklions/report-teacher-anatomy-aware-hierarchical-multimod**
-  (Kaggle, citado dentro de
+  (Kaggle, cited inside
   prvsiyan/rsna-knee-read-the-report-then-the-knee)
-  Why: ejemplo de especialista por hallazgo (Synovitis) con ensemble
-  RTA-HMIL — referencia para la Fase 6 si un hallazgo concreto queda
-  por debajo del resto tras el baseline.
+  Why: example of a per-finding specialist (Synovitis) with an
+  RTA-HMIL ensemble — a reference if one specific finding lags behind
+  the rest after the A2 baseline.
+- **"Reference A" — `rsna-knee-data-structure-eda-baseline.ipynb`**
+  (external notebook found by the user, 2026-08-24, downloaded to
+  `data/raw/_reference_kernels/rsna-knee-data-structure-eda-baseline.ipynb`)
+  Why: measured OOF 0.7675 with a graded 9-language assertion/negation/
+  severity lexicon (0.814 agreement vs. our gold, vs. our own 0.686) and
+  a 6-slot (plane × fluid-sensitivity × fat-sat) per-finding attention
+  architecture — the source design for A1a and A2. Its own full-pipeline
+  score (0.7675) trails the field (0.89–0.95+), so its design choices are
+  treated as one candidate among several, not a default — see the
+  strategy artifact linked from README.md for the full comparison.
+- **This competition's own discussion, post 735304 and ~15 related
+  threads** (Kaggle, pasted by the user 2026-08-24/25) — the single
+  highest-weight source behind the 2026-08-25 reorientation
+  Why: real, same-competition, same-metric evidence that outranks every
+  cross-competition source above. Established: real single-model scores
+  up to 0.951 (some from "LLM-only labels", 0.926–0.929); the host's
+  official per-finding severity thresholds (Dr. Jacob Kazam) — the
+  structural reason no text-only labeler clears ~0.82–0.88; an official
+  ruling (Po-Hao "Howard" Chen) that LLM-based report labeling is
+  permitted; Oleksii Zhukov's DICOM-metadata probe measuring a 0.0534
+  macro-AUC drop from random to scanner-grouped folds (motivated A0's
+  scanner-fingerprint grouping fix); stevenleehans's measured findings —
+  slice ordering only ~5% filename-reliable (A0b), per-label noise
+  diagnostics (`src/evaluate.py::per_label_gate`), and a labeling
+  deep-dive reaching 0.878–0.893 agreement vs. our own gold (A1a′, see
+  below). Full detail and per-item sourcing: the strategy artifact
+  linked from README.md.
+- **Published LLM label set, found 2026-08-25** (Kaggle Dataset,
+  downloaded locally by the user to `data/raw/_published_labels/`,
+  exact author unconfirmed — numbers reproduce stevenleehans's
+  forum-reported 0.878/0.8873 exactly, so likely their
+  `RSNA Knee Report Labels` dataset or an identical fork of it)
+  Why: scored 0.878–0.893 macro-AUC vs. our 58 gold studies
+  (`notebooks/03v2_published_label_validation.ipynb`, A1a′) — a
+  decisive win over our own regex labeler's 0.686, making A1a/A1b
+  unnecessary. Adopted as the training label source going forward.
 
-## Libros de la biblioteca (Desktop/LIBROS/)
+## Library books (Desktop/LIBROS/)
 
-- **Real-World Machine Learning**, cap. 4 y 8 — evaluacion de
-  clasificadores; NLP aplicado como baseline del labeler.
-- **Building Machine Learning Systems**, cap. 6-7 — text feature
-  engineering clasico, baseline previo a Snorkel.
-- **Dive into Deep Learning**, cap. 8, 13, 14 — fine-tuning de CNNs
-  modernas, computo eficiente, computer vision practico.
-- **Hands-On Machine Learning**, cap. 3, 13 — metricas de
-  clasificacion (ROC), CNNs.
-- **Advanced Machine Learning with Python**, cap. 8 — ensembles y
-  robustez del modelo.
-- **AI Engineering**, cap. 8-9 — marco de calidad de datos y
-  optimizacion de inferencia (adaptado desde LLMs a esta pipeline por
-  lotes).
-- **Bishop, PRML**, cap. 1.5 — teoria de decision detras de AUC.
+- **Real-World Machine Learning**, ch. 4 and 8 — classifier evaluation;
+  applied NLP as a labeler baseline.
+- **Building Machine Learning Systems**, ch. 6–7 — classic text feature
+  engineering, a baseline before Snorkel.
+- **Dive into Deep Learning**, ch. 8, 13, 14 — fine-tuning modern CNNs,
+  efficient compute, practical computer vision.
+- **Hands-On Machine Learning**, ch. 3, 13 — classification metrics
+  (ROC), CNNs.
+- **Advanced Machine Learning with Python**, ch. 8 — ensembles and
+  model robustness.
+- **AI Engineering**, ch. 8–9 — data-quality framework and inference
+  optimization (adapted from LLMs to this batch pipeline).
+- **Bishop, PRML**, ch. 1.5 — decision theory behind AUC.
