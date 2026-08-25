@@ -115,6 +115,110 @@ def load_dicom_series(raw_dir: Path, study_id: str, series_id: str,
     return geometric_slice_order(files)
 
 
+def build_group_ids(*group_key_series: pd.Series) -> pd.Series:
+    """Union-find over one or more grouping keys sharing the same index.
+
+    Two rows land in the same final group if they share ANY of the given
+    keys, directly or transitively through a third row. A naive
+    combination (e.g. a tuple of both keys per row) is wrong: if row A
+    shares key 1 with B, and B shares key 2 with C, A and C must end up
+    in the same group even though A and C share neither key directly —
+    only union-find gives the correct connected components.
+
+    A missing value (NaN/None) in a key series never unions anything —
+    every row keeps its own component under that key, since two missing
+    values are never treated as "the same" group.
+
+    Graduated 2026-08-25 from notebooks/00v2_measurement_gate.ipynb
+    (A0, Part B.3), where this exact construction — unioning
+    src.labelers.report_group_key() with build_scanner_fingerprints()
+    below — fixed a measured leak: 51 scanner fingerprints were split
+    across a fold's train/val boundary under report-only grouping,
+    affecting 4,399 of 4,407 studies (Kaggle run, real corpus). The
+    fixed folds measured 0 report-template leaks and 0 scanner leaks.
+    """
+    index = group_key_series[0].index
+    parent = {i: i for i in index}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for keys in group_key_series:
+        valid = keys.dropna()
+        for _, idx in valid.groupby(valid).groups.items():
+            idx = list(idx)
+            for other in idx[1:]:
+                union(idx[0], other)
+
+    return pd.Series({i: find(i) for i in index}, name="group_id")
+
+
+# DICOM tags used to fingerprint the scanner/site a study was acquired
+# on. Not an exhaustive identifier — just enough to catch the dominant
+# leakage source measured in notebooks/00v2_measurement_gate.ipynb.
+SCANNER_FINGERPRINT_TAGS = (
+    "Manufacturer",
+    "ManufacturerModelName",
+    "InstitutionName",
+    "DeviceSerialNumber",
+    "MagneticFieldStrength",
+    "StationName",
+)
+
+
+def build_scanner_fingerprints(raw_dir: Path, split: str = "train") -> pd.Series:
+    """Return one scanner fingerprint per study, from a single DICOM header.
+
+    Reads exactly one file (the first series listed for that study in
+    {split}_series.csv, its first file by name) with
+    `stop_before_pixels=True` — header-only, so this is cheap even
+    across the full corpus (no pixel decoding). The fingerprint is a
+    tuple of SCANNER_FINGERPRINT_TAGS values (stringified; a missing tag
+    becomes the string "None", not a Python None, so two studies missing
+    the same tag still fingerprint identically rather than each getting
+    a unique-by-accident value).
+
+    Needs the full DICOM tree under raw_dir/{split}_series/ — Kaggle
+    only, per project convention (see project-rsna-kaggle-notebooks-
+    strategy memory). Raises naturally (FileNotFoundError) if that tree
+    isn't present; this is deliberately not caught or defaulted, since a
+    silent fallback here is exactly the kind of gate-lying-to-itself
+    failure mode A0 exists to rule out (see
+    notebooks/00v2_measurement_gate.ipynb).
+
+    Graduated 2026-08-25 from notebooks/00v2_measurement_gate.ipynb
+    (A0, Part B.1), where this scan found 51 fingerprints shared across
+    a fold's train/val boundary under the then-current report-only
+    GroupKFold (see build_group_ids for the fix and full numbers).
+    """
+    series = pd.read_csv(raw_dir / f"{split}_series.csv")
+    first_series = series.drop_duplicates("StudyInstanceUID", keep="first")
+
+    fingerprints = {}
+    for row in first_series.itertuples(index=False):
+        series_dir = raw_dir / f"{split}_series" / row.StudyInstanceUID / row.SeriesInstanceUID
+        files = sorted(series_dir.glob("*.dcm"))
+        if not files:
+            fingerprints[row.StudyInstanceUID] = None
+            continue
+        ds = pydicom.dcmread(files[0], stop_before_pixels=True)
+        fingerprints[row.StudyInstanceUID] = tuple(
+            str(getattr(ds, tag, None)) for tag in SCANNER_FINGERPRINT_TAGS
+        )
+
+    result = pd.Series(fingerprints, name="scanner_fingerprint")
+    result.index.name = "StudyInstanceUID"
+    return result
+
+
 def load_reports(raw_dir: Path) -> pd.DataFrame:
     """Load the free-text radiology reports, one row per study.
 
@@ -189,7 +293,8 @@ def load_series_metadata(raw_dir: Path, split: str = "train") -> pd.DataFrame:
     raise NotImplementedError("Fill in once {split}_series.csv is available.")
 
 
-def load_training_labels(raw_dir: Path, n_folds: int = None) -> pd.DataFrame:
+def load_training_labels(raw_dir: Path, scanner_fingerprints: pd.Series,
+                          n_folds: int = None) -> pd.DataFrame:
     """Build the Fase 5 training-label table: gold+weak, with CV folds.
 
     One row per study (all 4,407), indexed by StudyInstanceUID, with one
@@ -201,23 +306,37 @@ def load_training_labels(raw_dir: Path, n_folds: int = None) -> pd.DataFrame:
       src.labelers.label_reports() (values in {0.0, 0.5, 1.0}, 0.5 =
       abstain) using the labeler's negation-scoping fix (2026-08-18).
     - `fold` comes from a plain sklearn GroupKFold (n_folds defaults to
-      config.CV_FOLDS), grouped by src.labelers.report_group_key() —
-      not by study — so a report template shared across studies (54
-      groups / 206 studies measured in notebooks/02_eda_reports.ipynb
-      section E, including 1 template shared between a gold and a weak
-      study) never spans train and validation. Group membership doesn't
-      depend on label values, so no stratification is attempted here:
-      the class-imbalance concern that motivated
-      MultilabelStratifiedKFold for the tiny 58-gold CV in Fase 4 is far
-      less pressing at n=4,407, and stratifying on a mix of hard 0/1 and
-      graded 0.5-abstention targets isn't well-defined anyway.
+      config.CV_FOLDS), grouped by build_group_ids() over BOTH
+      src.labelers.report_group_key() and `scanner_fingerprints` — not
+      by study, and not by report template alone. A report template
+      shared across studies (54 groups / 206 studies measured in
+      notebooks/02_eda_reports.ipynb section E, including 1 template
+      shared between a gold and a weak study) never spans train and
+      validation, and neither does a scanner fingerprint: report-only
+      grouping was measured (notebooks/00v2_measurement_gate.ipynb, A0)
+      to leak 51 scanner fingerprints across a fold's train/val boundary,
+      affecting 4,399 of 4,407 studies. `scanner_fingerprints` is
+      REQUIRED, not defaulted, on purpose — an implicit fallback to
+      report-only grouping here would silently reproduce that measured
+      leak, exactly the "gate lying to itself" failure mode A0 exists to
+      rule out. Build it with build_scanner_fingerprints() (Kaggle only,
+      needs the DICOM tree); pass a same-index all-None Series only for
+      tests that deliberately want to isolate report-group-only
+      behavior. Group membership doesn't depend on label values, so no
+      stratification is attempted here: the class-imbalance concern that
+      motivated MultilabelStratifiedKFold for the tiny 58-gold CV in
+      Fase 4 is far less pressing at n=4,407, and stratifying on a mix
+      of hard 0/1 and graded 0.5-abstention targets isn't well-defined
+      anyway.
 
     Graduated 2026-08-18 from
-    notebooks/04b_gold_weak_groupkfold.ipynb, where this exact
-    construction was validated against the real train.csv: 4,407 rows
-    out of 4,407 studies, 0 discrepancies between the gold rows here and
-    train.csv's own official columns, 0 report-template groups split
-    across folds.
+    notebooks/04b_gold_weak_groupkfold.ipynb (report-only grouping),
+    where this construction was validated against the real train.csv:
+    4,407 rows out of 4,407 studies, 0 discrepancies between the gold
+    rows here and train.csv's own official columns, 0 report-template
+    groups split across folds. Scanner grouping added 2026-08-25 from
+    notebooks/00v2_measurement_gate.ipynb (A0) — see build_group_ids
+    docstring for the real leak numbers this fixes.
     """
     n_folds = n_folds or config.CV_FOLDS
     reports = load_reports(raw_dir)
@@ -232,9 +351,10 @@ def load_training_labels(raw_dir: Path, n_folds: int = None) -> pd.DataFrame:
     combined["is_gold"] = is_gold
 
     group_keys = reports["Report"].apply(report_group_key)
+    group_ids = build_group_ids(group_keys, scanner_fingerprints.reindex(reports.index))
     gkf = GroupKFold(n_splits=n_folds)
     fold = pd.Series(-1, index=reports.index, dtype=int)
-    for fold_idx, (_, val_idx) in enumerate(gkf.split(reports, groups=group_keys.to_numpy())):
+    for fold_idx, (_, val_idx) in enumerate(gkf.split(reports, groups=group_ids.to_numpy())):
         fold.iloc[val_idx] = fold_idx
     combined["fold"] = fold
 

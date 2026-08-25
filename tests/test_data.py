@@ -1,8 +1,9 @@
 """Unit tests for src/data.py.
 
 load_reports(), load_gold_labels(), load_training_labels(),
-geometric_slice_order(), and load_dicom_series() are graduated so far.
-The first three: 2026-08-18, validated against the real train.csv in
+geometric_slice_order(), load_dicom_series(), build_group_ids(), and
+build_scanner_fingerprints() are graduated so far. The first three:
+2026-08-18, validated against the real train.csv in
 notebooks/04b_gold_weak_groupkfold.ipynb — see that notebook and
 RESOURCES.md for the real-data numbers these unit tests don't repeat.
 geometric_slice_order/load_dicom_series: 2026-08-25, validated against
@@ -10,6 +11,14 @@ the 58 real gold studies in notebooks/01v2_slice_ordering.ipynb (A0b) —
 41/58 real series were pure reversals under the old bare-SliceLocation
 sort; that real-corpus number isn't re-proven here either, only the
 sorting function's own logic on known synthetic inputs.
+build_group_ids/build_scanner_fingerprints/load_training_labels'
+scanner grouping: 2026-08-25, validated against the real 4,407-study
+corpus in notebooks/00v2_measurement_gate.ipynb (A0) — report-only
+grouping was measured to leak 51 scanner fingerprints across a fold's
+train/val boundary, affecting 4,399/4,407 studies; the combined
+report+scanner grouping measured 0 leaks of either kind. That real-
+corpus number isn't re-proven here either, only the grouping logic's
+own correctness on known synthetic inputs.
 build_dicom_cache and load_series_metadata remain NotImplementedError
 until Fase 4's ad-hoc DICOM-loading notebook code is itself graduated
 (see README.md Next steps) — no tests for those yet.
@@ -20,11 +29,20 @@ real-data numbers are already validated in the notebooks above and
 don't need re-proving here.
 """
 
+import pandas as pd
 from pydicom.dataset import FileDataset, FileMetaDataset
 from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
 from src.config import FINDINGS, OFFICIAL_LABEL_COLUMNS
-from src.data import geometric_slice_order, load_dicom_series, load_gold_labels, load_reports, load_training_labels
+from src.data import (
+    build_group_ids,
+    build_scanner_fingerprints,
+    geometric_slice_order,
+    load_dicom_series,
+    load_gold_labels,
+    load_reports,
+    load_training_labels,
+)
 from src.labelers import report_group_key
 
 LABEL_COLS = list(OFFICIAL_LABEL_COLUMNS.values())
@@ -99,7 +117,10 @@ def test_load_training_labels_keeps_gold_labels_exact_and_labels_weak_rows(tmp_p
     # gold1's official columns are all 0.0 above (an inconsistent fixture on
     # purpose): load_training_labels must trust the official column, not
     # re-derive it from the report text via the labeler.
-    combined = load_training_labels(raw_dir, n_folds=2)
+    no_scanner_data = pd.Series(
+        [None, None, None], index=["gold1", "weak1", "weak2"]
+    )
+    combined = load_training_labels(raw_dir, no_scanner_data, n_folds=2)
 
     assert set(combined.index) == {"gold1", "weak1", "weak2"}
     assert combined.loc["gold1", "acl_injury"] == 0.0
@@ -120,11 +141,102 @@ def test_load_training_labels_never_splits_a_shared_report_template_across_folds
         _weak_row("weak2", "Complete tear of the ACL with retraction."),
         _weak_row("weak3", "Complex tear of the medial meniscus."),
     ])
-    combined = load_training_labels(raw_dir, n_folds=2)
+    no_scanner_data = pd.Series(
+        [None, None, None, None], index=["gold1", "weak1", "weak2", "weak3"]
+    )
+    combined = load_training_labels(raw_dir, no_scanner_data, n_folds=2)
 
     assert report_group_key(shared_text) == report_group_key(shared_text)
     assert combined.loc["gold1", "fold"] == combined.loc["weak1", "fold"]
     assert (combined["fold"] >= 0).all()
+
+
+def test_load_training_labels_never_splits_a_shared_scanner_fingerprint_across_folds(tmp_path):
+    # weak2 and weak3 share nothing in their report text, but DO share a
+    # scanner fingerprint -- without scanner grouping, GroupKFold would be
+    # free to split them (this is exactly the 4,399/4,407-study leak
+    # measured in notebooks/00v2_measurement_gate.ipynb).
+    raw_dir = _write_train_csv(tmp_path, [
+        _gold_row("gold1", "Normal knee.", value=0.0),
+        _weak_row("weak1", "Mild degenerative change."),
+        _weak_row("weak2", "Complete tear of the ACL with retraction."),
+        _weak_row("weak3", "Complex tear of the medial meniscus."),
+    ])
+    shared_fp = ("SiemensCo", "Avanto", "General Hospital", "SN1", "1.5", "MRI1")
+    scanner_data = pd.Series(
+        {"gold1": None, "weak1": None, "weak2": shared_fp, "weak3": shared_fp}
+    )
+    combined = load_training_labels(raw_dir, scanner_data, n_folds=2)
+
+    assert combined.loc["weak2", "fold"] == combined.loc["weak3", "fold"]
+    assert (combined["fold"] >= 0).all()
+
+
+def test_build_group_ids_unions_rows_sharing_any_key_transitively(tmp_path):
+    # a-b share key1, b-c share key2 -- a and c must land in the same
+    # group even though they share neither key directly.
+    key1 = pd.Series({"a": "x", "b": "x", "c": None})
+    key2 = pd.Series({"a": None, "b": "y", "c": "y"})
+
+    groups = build_group_ids(key1, key2)
+
+    assert groups["a"] == groups["b"] == groups["c"]
+
+
+def test_build_group_ids_keeps_rows_separate_when_no_key_is_shared(tmp_path):
+    key1 = pd.Series({"a": "x", "b": "z"})
+    key2 = pd.Series({"a": None, "b": None})
+
+    groups = build_group_ids(key1, key2)
+
+    assert groups["a"] != groups["b"]
+
+
+def test_build_group_ids_never_unions_on_missing_values(tmp_path):
+    # both rows have a missing key1 -- that must NOT union them, since
+    # NaN/None is "unknown", not "the same group".
+    key1 = pd.Series({"a": None, "b": None})
+
+    groups = build_group_ids(key1)
+
+    assert groups["a"] != groups["b"]
+
+
+def test_build_scanner_fingerprints_groups_studies_sharing_all_tags(tmp_path):
+    raw_dir = tmp_path
+    series_csv = pd.DataFrame([
+        {"StudyInstanceUID": "study1", "SeriesInstanceUID": "series1"},
+        {"StudyInstanceUID": "study2", "SeriesInstanceUID": "series2"},
+    ])
+    series_csv.to_csv(raw_dir / "train_series.csv", index=False)
+
+    for study, series in [("study1", "series1"), ("study2", "series2")]:
+        series_dir = raw_dir / "train_series" / study / series
+        series_dir.mkdir(parents=True)
+        _write_dicom(series_dir / "a.dcm", Manufacturer="SiemensCo",
+                     InstitutionName="General Hospital")
+
+    fingerprints = build_scanner_fingerprints(raw_dir, split="train")
+
+    assert fingerprints["study1"] == fingerprints["study2"]
+
+
+def test_build_scanner_fingerprints_uses_first_series_per_study(tmp_path):
+    raw_dir = tmp_path
+    series_csv = pd.DataFrame([
+        {"StudyInstanceUID": "study1", "SeriesInstanceUID": "series_a"},
+        {"StudyInstanceUID": "study1", "SeriesInstanceUID": "series_b"},
+    ])
+    series_csv.to_csv(raw_dir / "train_series.csv", index=False)
+
+    series_dir = raw_dir / "train_series" / "study1" / "series_a"
+    series_dir.mkdir(parents=True)
+    _write_dicom(series_dir / "a.dcm", Manufacturer="SiemensCo")
+
+    fingerprints = build_scanner_fingerprints(raw_dir, split="train")
+
+    assert len(fingerprints) == 1
+    assert fingerprints["study1"][0] == "SiemensCo"
 
 
 # Standard axial-like orientation: row=[1,0,0], col=[0,1,0] -> normal=[0,0,1],

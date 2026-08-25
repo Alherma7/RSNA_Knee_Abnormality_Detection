@@ -1,14 +1,20 @@
-"""Unit tests for src/evaluate.py — the metric formula itself.
+"""Unit tests for src/evaluate.py — the metric formula and the A0 gate.
 
-These check the metric's plumbing (macro-averaging, column matching),
-not model quality — model quality is what the metric is FOR measuring,
-per structuring-ml-projects's step 5.
+macro_roc_auc/per_finding_roc_auc tests check the metric's plumbing
+(macro-averaging, column matching), not model quality — model quality
+is what the metric is FOR measuring, per structuring-ml-projects's
+step 5. worse_of_two/per_label_gate/gate_decision tests check the gate
+logic itself on synthetic scenarios; the real numbers they're built
+from (51 leaked scanner fingerprints, 4,399/4,407 studies affected) are
+validated in notebooks/00v2_measurement_gate.ipynb (A0), not re-proven
+here.
 """
 
+import numpy as np
 import pandas as pd
 import pytest
 
-from src.evaluate import macro_roc_auc, per_finding_roc_auc
+from src.evaluate import gate_decision, macro_roc_auc, per_finding_roc_auc, per_label_gate, worse_of_two
 
 
 def test_macro_roc_auc_perfect_predictions_scores_one():
@@ -45,3 +51,78 @@ def test_per_finding_roc_auc_returns_one_score_per_column():
     assert set(result.index) == {"a", "b"}
     assert result["a"] == pytest.approx(1.0)
     assert result["b"] == pytest.approx(0.0)
+
+
+def test_worse_of_two_passes_when_both_gauges_improve():
+    result = worse_of_two(baseline_gold=0.571, candidate_gold=0.590,
+                           baseline_weak=0.540, candidate_weak=0.552,
+                           gold_tol=0.03, weak_tol=0.01)
+    assert result["passed"] is True
+    assert result["gold_ok"] is True
+    assert result["weak_ok"] is True
+
+
+def test_worse_of_two_fails_when_one_gauge_regresses_beyond_tolerance():
+    # gold improves a lot, but weak regresses well past its tolerance --
+    # exactly the scenario worse_of_two exists to catch.
+    result = worse_of_two(baseline_gold=0.571, candidate_gold=0.610,
+                           baseline_weak=0.540, candidate_weak=0.520,
+                           gold_tol=0.03, weak_tol=0.01)
+    assert result["passed"] is False
+    assert result["gold_ok"] is True
+    assert result["weak_ok"] is False
+
+
+def test_worse_of_two_passes_within_tolerance_even_if_both_dip_slightly():
+    result = worse_of_two(baseline_gold=0.571, candidate_gold=0.565,
+                           baseline_weak=0.540, candidate_weak=0.538,
+                           gold_tol=0.03, weak_tol=0.01)
+    assert result["passed"] is True
+
+
+def test_per_label_gate_flags_broad_effect_when_most_labels_move_together():
+    baseline = pd.Series(0.60, index=[f"finding_{i}" for i in range(12)])
+    candidate = baseline.copy()
+    candidate[:] += np.array([0.05] * 9 + [0.0] * 3)  # 9/12 move concordantly
+
+    result = per_label_gate(baseline, candidate)
+
+    assert result["n_concordant"] == 9
+    assert result["broad_effect"] is True
+
+
+def test_per_label_gate_flags_narrow_effect_when_one_label_drives_the_macro_move():
+    baseline = pd.Series(0.60, index=[f"finding_{i}" for i in range(12)])
+    candidate = baseline.copy()
+    candidate["finding_0"] += 0.40
+    candidate[[f"finding_{i}" for i in range(1, 12)]] += 0.005  # ~flat
+
+    result = per_label_gate(baseline, candidate)
+
+    assert result["macro_delta"] > 0  # macro looks like an improvement...
+    assert result["n_concordant"] == 1
+    assert result["broad_effect"] is False  # ...but it isn't a broad one
+
+
+def test_gate_decision_requires_both_macro_and_label_checks_to_pass():
+    findings = [f"finding_{i}" for i in range(12)]
+    baseline_gold = pd.Series(0.60, index=findings)
+
+    broad_candidate = baseline_gold.copy()
+    broad_candidate[:] += 0.04  # all 12 move together
+
+    narrow_candidate = baseline_gold.copy()
+    narrow_candidate["finding_0"] += 0.48
+    narrow_candidate[findings[1:]] += 0.005
+
+    broad = gate_decision(baseline_gold, broad_candidate,
+                           baseline_weak_macro=0.540, candidate_weak_macro=0.552,
+                           gold_tol=0.03, weak_tol=0.01)
+    assert broad["passed"] is True
+
+    narrow = gate_decision(baseline_gold, narrow_candidate,
+                            baseline_weak_macro=0.540, candidate_weak_macro=0.552,
+                            gold_tol=0.03, weak_tol=0.01)
+    assert narrow["passed"] is False  # macro check alone would have passed this
+    assert narrow["macro_check"]["passed"] is True
+    assert narrow["label_check"]["broad_effect"] is False

@@ -28,7 +28,15 @@ ON_KAGGLE = "KAGGLE_KERNEL_RUN_TYPE" in os.environ
 DATA_RAW_DIR = _KAGGLE_INPUT_DIR if ON_KAGGLE else PROJECT_ROOT / "data" / "raw"
 
 RANDOM_STATE = 42
-CV_FOLDS = 5
+
+# 4, not 5: measured 2026-08-25 (notebooks/00v2_measurement_gate.ipynb,
+# A0) on the real corpus, grouping by the union of report-template and
+# scanner-fingerprint groups (see src/data.py::build_group_ids) — gold
+# studies per fold min=11/4 folds vs. min=7/5 folds. The pooled 58-gold
+# gate is already noise-limited; a fold with only 7 gold studies makes
+# that fold's contribution close to meaningless. Same motivation
+# mammography 1st place cites for going 5->4.
+CV_FOLDS = 4
 
 # Verified 2026-08-16 against the official Kaggle "Dataset Description"
 # (pasted by the user from the competition data tab) — content and order
