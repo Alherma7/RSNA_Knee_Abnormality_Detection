@@ -53,6 +53,28 @@ def test_per_finding_roc_auc_returns_one_score_per_column():
     assert result["b"] == pytest.approx(0.0)
 
 
+def test_per_finding_roc_auc_returns_nan_for_a_column_with_only_one_class():
+    # "b" is all-positive -- a real possibility on a small validation set
+    # (e.g. a rare finding among a fold's ~17 gold studies), not a bug.
+    # ROC AUC is mathematically undefined for it.
+    y_true = pd.DataFrame({"a": [0, 1], "b": [1, 1]})
+    y_pred = pd.DataFrame({"a": [0.1, 0.9], "b": [0.6, 0.7]})
+    result = per_finding_roc_auc(y_true, y_pred)
+    assert result["a"] == pytest.approx(1.0)
+    assert np.isnan(result["b"])
+
+
+def test_macro_roc_auc_excludes_a_single_class_column_instead_of_going_nan():
+    # Found 2026-08-26 running A2 on Kaggle: a fold's 17-gold validation
+    # set had a finding with only one class present, and the old
+    # implementation let that NaN silently propagate through np.mean into
+    # the whole macro score every epoch -- undetected because no existing
+    # test covered this case.
+    y_true = pd.DataFrame({"a": [0, 1], "b": [1, 1]})
+    y_pred = pd.DataFrame({"a": [0.1, 0.9], "b": [0.6, 0.7]})
+    assert macro_roc_auc(y_true, y_pred) == pytest.approx(1.0)
+
+
 def test_worse_of_two_passes_when_both_gauges_improve():
     result = worse_of_two(baseline_gold=0.571, candidate_gold=0.590,
                            baseline_weak=0.540, candidate_weak=0.552,

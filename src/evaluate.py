@@ -23,24 +23,47 @@ def macro_roc_auc(y_true: pd.DataFrame, y_pred: pd.DataFrame) -> float:
     """Unweighted mean of per-finding ROC AUC across all finding columns.
 
     y_true and y_pred must share the same columns (one per finding) and
-    the same row index (one per study). Raises if a column's y_true has
-    only one class present, since ROC AUC is undefined in that case —
-    that should surface as an error, not a silently skipped column.
+    the same row index (one per study). A column whose y_true has only
+    one class present (real possibility on a small validation set — e.g.
+    a rare finding among a fold's ~17 gold studies, not a bug) has an
+    undefined ROC AUC — excluded from the mean via per_finding_roc_auc's
+    NaN, with a printed note naming which finding(s), rather than either
+    silently propagating NaN into the whole macro score or crashing.
+
+    Found 2026-08-26 running A2 on Kaggle: this function's own docstring
+    used to claim it "raises" in that case, on the assumption
+    roc_auc_score() does — measured false for the installed sklearn
+    version, which warns (UndefinedMetricWarning) and returns NaN
+    instead. That NaN was silently averaged into every epoch's macro
+    score via plain np.mean, undetected because no test covered a
+    single-class column.
     """
     if list(y_true.columns) != list(y_pred.columns):
         raise ValueError("y_true and y_pred must have matching columns.")
-    per_finding_auc = {
-        col: roc_auc_score(y_true[col], y_pred[col])
-        for col in y_true.columns
-    }
-    return float(np.mean(list(per_finding_auc.values())))
+    per_finding = per_finding_roc_auc(y_true, y_pred)
+    undefined = per_finding[per_finding.isna()]
+    if len(undefined) > 0:
+        print(f"macro_roc_auc: {len(undefined)} finding(s) undefined this fold "
+              f"- {list(undefined.index)}, excluded from the mean, not treated as 0")
+    return float(per_finding.mean())  # pandas .mean() skips NaN by default
 
 
 def per_finding_roc_auc(y_true: pd.DataFrame, y_pred: pd.DataFrame) -> pd.Series:
-    """Per-finding ROC AUC, for diagnosing which findings drag the score."""
-    return pd.Series(
-        {col: roc_auc_score(y_true[col], y_pred[col]) for col in y_true.columns}
-    )
+    """Per-finding ROC AUC, for diagnosing which findings drag the score.
+
+    A column is NaN, not raised or skipped, when its y_true has only one
+    class present — checked explicitly via nunique() rather than relying
+    on roc_auc_score()'s own behaviour on that input, which varies by
+    sklearn version (raise vs. warn-and-return-nan; the latter measured
+    for the installed version, 2026-08-26).
+    """
+    scores = {}
+    for col in y_true.columns:
+        if y_true[col].nunique() < 2:
+            scores[col] = float("nan")
+        else:
+            scores[col] = roc_auc_score(y_true[col], y_pred[col])
+    return pd.Series(scores)
 
 
 def worse_of_two(baseline_gold: float, candidate_gold: float,
