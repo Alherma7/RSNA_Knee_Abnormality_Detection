@@ -318,6 +318,42 @@ def load_slot_cache_shard(cache_dir: Path, shard: str) -> "tuple[np.ndarray, np.
     return cache, mask, pd.Index(studies["StudyInstanceUID"], name="StudyInstanceUID")
 
 
+def load_published_labels(raw_dir: Path) -> pd.DataFrame:
+    """Load the A1a'-adopted published LLM label set (llm_labels_v4_blend.csv).
+
+    Continuous [0, 1] scores per finding — NOT gold-standard 0/1, this is
+    an LLM's graded read of the report text, scored at 0.8927 macro-AUC
+    vs. our 58 real gold studies (notebooks/03v2_published_label_validation.ipynb,
+    A1a'), decisively beating src.labelers.label_reports()'s 0.686. Covers
+    all 4,407 studies (gold + weak) per that same validation. Row order
+    matches raw_dir/train.csv's own StudyInstanceUID order.
+
+    Raises ValueError if any train.csv study is missing from this file —
+    a coverage guard, not a silent NaN, same reasoning as
+    build_scanner_fingerprints' explicit-raise-over-silent-default
+    choice.
+
+    Graduated 2026-08-26 as part of A2's data-flow fix (see
+    docs/superpowers/specs/2026-08-26-a2-slot-attention-model-design.md,
+    section 2.1) — A1a' validated this label set but never wired it into
+    load_training_labels(), which kept calling the old regex labeler.
+    """
+    published = pd.read_csv(raw_dir / "_published_labels" / "llm_labels_v4_blend.csv")
+    label_cols = list(config.OFFICIAL_LABEL_COLUMNS.values())
+    published = published.set_index("StudyInstanceUID")[label_cols]
+    published.columns = list(config.OFFICIAL_LABEL_COLUMNS.keys())
+
+    train = pd.read_csv(raw_dir / "train.csv")
+    missing = set(train["StudyInstanceUID"]) - set(published.index)
+    if missing:
+        raise ValueError(
+            f"{len(missing)} train.csv studies missing from the published "
+            f"label set, e.g. {sorted(missing)[:5]}"
+        )
+
+    return published.reindex(train["StudyInstanceUID"])
+
+
 def load_series_metadata(raw_dir: Path, split: str = "train") -> pd.DataFrame:
     """Load {split}_series.csv (plane, Fluid_Sensitive, Fat_Suppression).
 

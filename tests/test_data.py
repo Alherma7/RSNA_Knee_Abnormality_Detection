@@ -49,6 +49,7 @@ from src.data import (
     geometric_slice_order,
     load_dicom_series,
     load_gold_labels,
+    load_published_labels,
     load_reports,
     load_slot_cache_shard,
     load_training_labels,
@@ -93,6 +94,46 @@ def _gold_row(study_id, report, value=1.0):
 
 def _weak_row(study_id, report):
     return {"StudyInstanceUID": study_id, "Report": report}
+
+
+def _write_published_labels_csv(raw_dir, rows):
+    """rows: list of dicts with StudyInstanceUID + the 12 official
+    label-column names (OFFICIAL_LABEL_COLUMNS values), continuous
+    floats -- matches the real llm_labels_v4_blend.csv layout."""
+    published_dir = raw_dir / "_published_labels"
+    published_dir.mkdir(exist_ok=True)
+    pd.DataFrame(rows).to_csv(published_dir / "llm_labels_v4_blend.csv", index=False)
+
+
+def test_load_published_labels_maps_columns_and_indexes_by_study(tmp_path):
+    raw_dir = _write_train_csv(tmp_path, [
+        _weak_row("s1", "report 1"),
+        _weak_row("s2", "report 2"),
+    ])
+    _write_published_labels_csv(raw_dir, [
+        {"StudyInstanceUID": "s1", **{c: 0.9 for c in LABEL_COLS}},
+        {"StudyInstanceUID": "s2", **{c: 0.1 for c in LABEL_COLS}},
+    ])
+
+    published = load_published_labels(raw_dir)
+
+    assert list(published.index) == ["s1", "s2"]
+    assert list(published.columns) == FINDINGS
+    assert published.loc["s1", "acl_injury"] == 0.9
+    assert published.loc["s2", "acl_injury"] == 0.1
+
+
+def test_load_published_labels_raises_when_a_study_is_missing(tmp_path):
+    raw_dir = _write_train_csv(tmp_path, [
+        _weak_row("s1", "report 1"),
+        _weak_row("s2", "report 2"),
+    ])
+    _write_published_labels_csv(raw_dir, [
+        {"StudyInstanceUID": "s1", **{c: 0.5 for c in LABEL_COLS}},
+    ])
+
+    with pytest.raises(ValueError):
+        load_published_labels(raw_dir)
 
 
 def test_load_reports_indexes_by_study_and_keeps_report_column(tmp_path):
