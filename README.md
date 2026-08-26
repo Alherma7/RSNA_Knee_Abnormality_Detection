@@ -75,14 +75,25 @@ notebooks going forward, one per plan item.
   LLM label set scores 0.878–0.893 macro-AUC vs. our 58 gold studies —
   a decisive win over our own labeler's 0.686. **A1a (port a lexicon)
   and A1b (build our own LLM pass) are skipped as unnecessary.**
+- **A3** (preprocessing): reused a published slot-attention pixel cache
+  (stevenleehans/rsna-knee-500gb-to-11gib-cpu-pixel-cache) instead of
+  rebuilding our own DICOM pipeline, given this project's own
+  preprocessing track record (see RESOURCES.md). Validated against the
+  real cache on Kaggle: `cache_meta.json` matches the source's build
+  config exactly, all 4,407 studies + all 58 gold present across the 4
+  train shards, and a visual check of decoded images across all 6 slots
+  confirmed correctly-oriented real knee MRI. Graduated
+  `src/data.py::load_slot_cache_shard()` and
+  `src/features.py::select_group()`.
 
 ## Next steps
 
-- [ ] **A3** — rebuild preprocessing cleanly in `src/` (don't
-      reconstruct the lost `05a_weak_dicom_preprocess.ipynb`).
 - [ ] **A2** — 6 physical slots (plane × fluid-sensitivity × fat-sat)
       with per-finding attention, as an A/B against a large random
-      slice bag.
+      slice bag. Which anchor group(s) (`select_group`'s `group_index`)
+      to feed the model is an open sub-question, deliberately not
+      pre-committed in A3 — see `src/features.py::select_group()`'s
+      docstring.
 - [ ] Tier B items once A2 lands: drop `pos_weight`, EMA at 0.997,
       re-open augmentation, checkpoint/rank ensembling, RadImageNet
       domain pretraining (not backbone size — measured null, see the

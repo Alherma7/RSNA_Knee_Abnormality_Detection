@@ -591,6 +591,26 @@ or function in this repo.
   (`notebooks/03v2_published_label_validation.ipynb`, A1a′) — a
   decisive win over our own regex labeler's 0.686, making A1a/A1b
   unnecessary. Adopted as the training label source going forward.
+- **stevenleehans/rsna-knee-500gb-to-11gib-cpu-pixel-cache** (Kaggle
+  notebook, downloaded to
+  `data/raw/_reference_kernels/rsna-knee-500gb-to-11gib-cpu-pixel-cache.ipynb`)
+  Why: **A3's preprocessing source** — chosen 2026-08-26 to reuse rather
+  than rebuild (see
+  [[feedback-prefer-reuse-over-rebuild-preprocessing]]). Its `Output` is
+  the attachable slot cache (`notebooks/04v2_slot_cache_integration.ipynb`):
+  6 named slots recovered from raw DICOM headers (plane × fluid-sensitivity
+  × fat-suppression, independently confirming
+  `Fluid_Sensitive`/`Fat_Suppression` collapse to one bit in
+  `train_series.csv`), `crop_mm=130` (not the historical 160, which sits
+  at this corpus's median FOV and silently disabled the crop on ~61% of
+  studies), 9 slices/slot as 3 physically-adjacent-slice anchors
+  (`group=3, n_group=3`, `take_group` indexing — mirrored by
+  `select_group` in the notebook above), and a narrowed sampling window
+  (`RSNA_WINDOW=0.35,0.65`) built specifically to de-confound an earlier
+  same-notebook finding that 3 centre slices beat 9 window-spread slices
+  (`exp-016`, +0.0086 AUC) — the "3 vs 9" comparison, that source's own
+  code comments note, is a real result but confounded on *which* window
+  was used, not settled for this narrower-window build.
 
 ## Library books (Desktop/LIBROS/)
 

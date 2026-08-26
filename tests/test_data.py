@@ -19,6 +19,13 @@ train/val boundary, affecting 4,399/4,407 studies; the combined
 report+scanner grouping measured 0 leaks of either kind. That real-
 corpus number isn't re-proven here either, only the grouping logic's
 own correctness on known synthetic inputs.
+load_slot_cache_shard(): 2026-08-26 (A3), validated against the real
+published cache on Kaggle in
+notebooks/04v2_slot_cache_integration.ipynb — shapes, full 4,407/58-gold
+coverage, and a visual check all passed against real data; that
+real-corpus validation isn't re-proven here, only the function's own
+shape-mismatch guard on known synthetic inputs.
+
 build_dicom_cache and load_series_metadata remain NotImplementedError
 until Fase 4's ad-hoc DICOM-loading notebook code is itself graduated
 (see README.md Next steps) — no tests for those yet.
@@ -29,7 +36,9 @@ real-data numbers are already validated in the notebooks above and
 don't need re-proving here.
 """
 
+import numpy as np
 import pandas as pd
+import pytest
 from pydicom.dataset import FileDataset, FileMetaDataset
 from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
@@ -41,6 +50,7 @@ from src.data import (
     load_dicom_series,
     load_gold_labels,
     load_reports,
+    load_slot_cache_shard,
     load_training_labels,
 )
 from src.labelers import report_group_key
@@ -323,3 +333,37 @@ def test_load_dicom_series_lists_and_orders_files_from_the_series_directory(tmp_
     ordered = load_dicom_series(tmp_path, "study1", "series1", split="train")
 
     assert [f.name for f in ordered] == ["a.dcm", "b.dcm"]
+
+
+def _write_slot_cache_shard(cache_dir, shard, n_studies=2, n_mismatch=0):
+    """A minimal but real slot cache shard: small (n, 6, 9, 4, 4) uint8
+    array instead of the real (n, 6, 9, 224, 224) — same shape family,
+    cheap to write/read. `n_mismatch` deliberately shortens the studies
+    CSV to exercise the row-count guard."""
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache = np.zeros((n_studies, 6, 9, 4, 4), dtype=np.uint8)
+    mask = np.ones((n_studies, 6), dtype=np.float32)
+    np.save(cache_dir / f"{shard}_cache.npy", cache)
+    np.save(cache_dir / f"{shard}_mask.npy", mask)
+
+    study_ids = [f"study{i}" for i in range(n_studies - n_mismatch)]
+    pd.DataFrame({"StudyInstanceUID": study_ids}).to_csv(
+        cache_dir / f"{shard}_studies.csv", index=False
+    )
+
+
+def test_load_slot_cache_shard_returns_aligned_cache_mask_and_study_ids(tmp_path):
+    _write_slot_cache_shard(tmp_path, "train.s00of04", n_studies=3)
+
+    cache, mask, study_ids = load_slot_cache_shard(tmp_path, "train.s00of04")
+
+    assert cache.shape == (3, 6, 9, 4, 4)
+    assert mask.shape == (3, 6)
+    assert list(study_ids) == ["study0", "study1", "study2"]
+
+
+def test_load_slot_cache_shard_raises_when_row_counts_disagree(tmp_path):
+    _write_slot_cache_shard(tmp_path, "train.s00of04", n_studies=3, n_mismatch=1)
+
+    with pytest.raises(ValueError):
+        load_slot_cache_shard(tmp_path, "train.s00of04")

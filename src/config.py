@@ -86,3 +86,30 @@ MRI_PLANES = ("sagittal", "coronal", "axial")
 # with no language identifier column — lexicon-based labeling functions
 # must test all languages at once rather than routing by a language guess.
 REPORT_LANGUAGE_COUNT = 9
+
+# A3: the published slot-attention pixel cache's 6 named slots (plane x
+# fluid-sensitivity x fat-suppression, recovered from raw DICOM headers —
+# NOT the same as MRI_PLANES x {0, 1}: there is no axial non-fluid slot,
+# and only sagittal has a fluid-sensitive-without-fat-sat slot, so the
+# real set is an asymmetric 6, not a symmetric 3x2 grid). Order matches
+# the cache's array axis 1 exactly. Source: stevenleehans/rsna-knee-
+# 500gb-to-11gib-cpu-pixel-cache (see RESOURCES.md), confirmed against
+# real cache_meta.json output 2026-08-26
+# (notebooks/04v2_slot_cache_integration.ipynb, A3).
+SLOT_NAMES = (
+    "SAG_FLUID_FS",
+    "COR_FLUID_FS",
+    "AX_FLUID_FS",
+    "SAG_FLUID_NOFS",
+    "COR_T1",
+    "SAG_T1",
+)
+
+# Same source/notebook as SLOT_NAMES. Each slot stores SLOT_CACHE_N_GROUPS
+# anchor groups of SLOT_CACHE_GROUP_SIZE physically-adjacent slices each
+# (9 slices/slot total), at SLOT_CACHE_IMG_SIZE^2 pixels, cropped to a
+# SLOT_CACHE_CROP_MM physical field of view.
+SLOT_CACHE_CROP_MM = 130.0
+SLOT_CACHE_IMG_SIZE = 224
+SLOT_CACHE_GROUP_SIZE = 3
+SLOT_CACHE_N_GROUPS = 3

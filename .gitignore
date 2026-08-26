@@ -31,3 +31,4 @@ Thumbs.db
 # Imagenes reales de pacientes generadas al inspeccionar notebooks fuera
 # de data/raw/ (nunca commitear).
 sample_triplets.png
+sample_slot_cache_grid.png

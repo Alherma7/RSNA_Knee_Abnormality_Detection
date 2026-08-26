@@ -264,6 +264,60 @@ def load_gold_labels(raw_dir: Path) -> pd.DataFrame:
     return gold
 
 
+def load_slot_cache_shard(cache_dir: Path, shard: str) -> "tuple[np.ndarray, np.ndarray, pd.Index]":
+    """Load one shard of the published slot-attention pixel cache (A3).
+
+    Returns `(cache, mask, study_ids)`:
+    - `cache`: `(n_studies, 6, 9, 224, 224)` uint8, memory-mapped (not
+      read into RAM — shards run ~3GB each). Axis 1 is
+      `config.SLOT_NAMES`. Axis 2 is 3 anchor groups of 3
+      physically-adjacent slices each (`config.SLOT_CACHE_N_GROUPS` /
+      `SLOT_CACHE_GROUP_SIZE`) — use `features.select_group()` to pick
+      which group(s) feed the model.
+    - `mask`: `(n_studies, 6)` float32, 1.0/0.0 per slot — **not every
+      study has all 6 slots**; only 47.2% did in the real corpus
+      (measured below), so this mask must be honoured (e.g. masked
+      softmax attention), not assumed all-ones.
+    - `study_ids`: `pd.Index` of `StudyInstanceUID`, row `i` matches row
+      `i` of `cache`/`mask`.
+
+    `shard` is e.g. `"train.s00of04"` — see `cache_meta.json` in
+    `cache_dir` for the full list and per-shard study counts. Raises
+    naturally (FileNotFoundError) if the three files for `shard` aren't
+    present — not caught or defaulted, same reasoning as
+    `build_scanner_fingerprints`: a silent fallback here would hide a
+    misconfigured `cache_dir` rather than surface it.
+
+    Source: stevenleehans/rsna-knee-500gb-to-11gib-cpu-pixel-cache (see
+    RESOURCES.md for the full build-config citation — `crop_mm=130`,
+    `RSNA_WINDOW=0.35,0.65`, etc.) — chosen 2026-08-26 to reuse rather
+    than rebuild our own DICOM pipeline (this project's own preprocessing
+    track record motivated that call; see
+    feedback-prefer-reuse-over-rebuild-preprocessing in project memory).
+
+    Graduated 2026-08-26 from notebooks/04v2_slot_cache_integration.ipynb
+    (A3), validated against the real cache on Kaggle: `cache_meta.json`
+    matched the source code's own config exactly; shapes were
+    `(1101, 6, 9, 224, 224)` / `(1101, 6)` for shard `train.s00of04`,
+    consistent with `cache_meta.json["splits"]`; all 4 train shards
+    together cover all 4,407 studies (0 duplicates, 0 unknown IDs) and
+    all 58 gold studies; a visual grid of decoded images across all 6
+    slots for 3 sample studies showed correctly-oriented, real knee MRI
+    with no corruption.
+    """
+    cache = np.load(cache_dir / f"{shard}_cache.npy", mmap_mode="r")
+    mask = np.load(cache_dir / f"{shard}_mask.npy")
+    studies = pd.read_csv(cache_dir / f"{shard}_studies.csv")
+
+    if not (cache.shape[0] == mask.shape[0] == len(studies)):
+        raise ValueError(
+            f"{shard}: cache/mask/studies row counts disagree "
+            f"({cache.shape[0]}/{mask.shape[0]}/{len(studies)})"
+        )
+
+    return cache, mask, pd.Index(studies["StudyInstanceUID"], name="StudyInstanceUID")
+
+
 def load_series_metadata(raw_dir: Path, split: str = "train") -> pd.DataFrame:
     """Load {split}_series.csv (plane, Fluid_Sensitive, Fat_Suppression).
 
