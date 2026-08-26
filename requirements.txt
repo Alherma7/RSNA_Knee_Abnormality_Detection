@@ -8,5 +8,9 @@ pydicom
 matplotlib
 jupyterlab
 
-# Add once real image-model training starts (A2/A3), not before:
-#   torch, torchvision, monai, timm, snorkel
+# CPU-only here - real GPU training happens on Kaggle, this is just for
+# hermetic unit tests of tensor-shape/masking logic (A2).
+torch
+
+# Add once the rest of A2 graduates (post-Kaggle validation):
+#   torchvision, monai, timm, snorkel
