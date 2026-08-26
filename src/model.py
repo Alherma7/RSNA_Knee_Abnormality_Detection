@@ -19,19 +19,21 @@ optional:
   does not resemble the signal in an MRI slice — every other axis
   (resolution, model size, slice coverage) runs into that same ceiling.
 
-masked_finding_attention() is A2's realization of the first bullet,
-graduated 2026-08-26 — see
-docs/superpowers/specs/2026-08-26-a2-slot-attention-model-design.md
-for the full design (source: DINOv2-small backbone, 6 named slots from
-src/data.py::load_slot_cache_shard). build_backbone()/
-build_multiplane_model() below stay NotImplementedError until
-notebooks/05v2_slot_attention_baseline.ipynb (which duplicates this
-function inline, since Kaggle can't import this repo) produces real,
-user-reviewed output — that's the part of A2 real data has to validate,
-not something a synthetic test can substitute for.
+masked_finding_attention()/build_backbone()/build_multiplane_model() are
+A2's realization of the first bullet — see
+docs/superpowers/specs/2026-08-26-a2-slot-attention-model-design.md for
+the full design. Graduated 2026-08-26 from
+notebooks/05v2_slot_attention_baseline.ipynb (which carries its own
+duplicated copy of this same logic, since Kaggle can't import this
+repo), after that notebook produced real, user-reviewed output on
+Kaggle: 0.7689 gold macro-AUC, fold 0, real DINOv2-small weights, real
+A3 cache, 12 epochs. `predict()` stays NotImplementedError — that needs
+the test-time cache/inference pipeline, not built yet.
 """
 
+import timm
 import torch
+import torch.nn as nn
 
 
 def masked_finding_attention(embeddings: "torch.Tensor", mask: "torch.Tensor",
@@ -79,19 +81,83 @@ def masked_finding_attention(embeddings: "torch.Tensor", mask: "torch.Tensor",
     return logits
 
 
-def build_backbone(name: str, pretrained: bool = True):
-    """Return an image backbone (e.g. EfficientNet-B0/B3, DINOv2-small)."""
-    raise NotImplementedError("Fill in once a DL framework is chosen.")
+def build_backbone(name: str = "vit_small_patch14_dinov2.lvd142m",
+                    pretrained: bool = True, img_size: int = 224):
+    """Return a timm image backbone, feature-extraction mode (no head).
+
+    Default is DINOv2-small — the exact tagged identifier confirmed
+    2026-08-26 (the bare name without `.lvd142m` does not resolve, see
+    RESOURCES.md). Native pretrained resolution is 518x518; `img_size`
+    interpolates the position embeddings down to our A3 cache's 224x224
+    — confirmed working on real Kaggle data 2026-08-26 (A2 v1's run).
+    `num_classes=0` drops the classification head, returning pooled
+    features of dimension `model.num_features` (384 for DINOv2-small).
+    """
+    return timm.create_model(name, pretrained=pretrained, num_classes=0, img_size=img_size)
 
 
-def build_multiplane_model(backbone_name: str, n_findings: int):
-    """Wire backbone + per-finding attention pooling over plane/sequence slots.
+class SlotAttentionModel(nn.Module):
+    """DINOv2-small backbone (shared, fine-tuned) + per-finding masked
+    attention over up to 6 slots + one small linear head per finding.
+
+    See docs/superpowers/specs/2026-08-26-a2-slot-attention-model-design.md
+    section 3 for the full design rationale, and masked_finding_attention()
+    above for the pooling math this wraps.
+    """
+
+    def __init__(self, n_findings: int, n_slots: int,
+                 backbone_name: str = "vit_small_patch14_dinov2.lvd142m",
+                 pretrained: bool = True, unfreeze_last: int = 6):
+        super().__init__()
+        self.backbone = build_backbone(backbone_name, pretrained=pretrained)
+        embed_dim = self.backbone.num_features
+
+        for p in self.backbone.parameters():
+            p.requires_grad = False
+        for block in self.backbone.blocks[-unfreeze_last:]:
+            for p in block.parameters():
+                p.requires_grad = True
+
+        self.query = nn.Parameter(torch.randn(n_findings, embed_dim) * (embed_dim ** -0.5))
+        self.heads = nn.Linear(embed_dim, n_findings)
+        self.embed_dim = embed_dim
+        self.n_findings = n_findings
+        self.n_slots = n_slots
+
+    def forward(self, slot_images: "torch.Tensor", slot_mask: "torch.Tensor") -> "torch.Tensor":
+        """slot_images: (B, n_slots, 3, H, W). slot_mask: (B, n_slots). Returns (B, n_findings) logits."""
+        B, S, C, H, W = slot_images.shape
+        if S != self.n_slots or C != 3:
+            raise ValueError(
+                f"expected slot_images (*, {self.n_slots}, 3, H, W), got {tuple(slot_images.shape)}"
+            )
+        if tuple(slot_mask.shape) != (B, S):
+            raise ValueError(f"expected slot_mask ({B}, {S}), got {tuple(slot_mask.shape)}")
+
+        flat = slot_images.view(B * S, C, H, W)
+        embeddings = self.backbone(flat).view(B, S, self.embed_dim)
+        return masked_finding_attention(
+            embeddings, slot_mask, self.query, self.heads.weight, self.heads.bias
+        )
+
+
+def build_multiplane_model(backbone_name: str, n_findings: int, n_slots: int = 6,
+                            pretrained: bool = True, unfreeze_last: int = 6) -> SlotAttentionModel:
+    """Wire backbone + per-finding masked attention pooling over slots.
 
     Each finding o gets its own learned query q_o that attends over the
-    slot embeddings (with a presence mask for studies missing a slot),
-    rather than a shared mean pool — see module docstring.
+    slot embeddings (masked for studies missing a slot), rather than a
+    shared mean pool — see module docstring and masked_finding_attention().
+
+    Graduated 2026-08-26 from
+    notebooks/05v2_slot_attention_baseline.ipynb (A2), where this exact
+    construction (n_slots=6, unfreeze_last=6, DINOv2-small) trained for
+    real: 0.7689 gold macro-AUC, fold 0.
     """
-    raise NotImplementedError("Fill in once build_backbone() is validated.")
+    return SlotAttentionModel(
+        n_findings=n_findings, n_slots=n_slots, backbone_name=backbone_name,
+        pretrained=pretrained, unfreeze_last=unfreeze_last,
+    )
 
 
 def predict(model, study_features) -> "dict[str, float]":

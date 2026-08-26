@@ -85,16 +85,36 @@ notebooks going forward, one per plan item.
   confirmed correctly-oriented real knee MRI. Graduated
   `src/data.py::load_slot_cache_shard()` and
   `src/features.py::select_group()`.
+- **A2 v1** (slot-attention model): DINOv2-small backbone
+  (`vit_small_patch14_dinov2.lvd142m`, fine-tuned, last 6 transformer
+  blocks unfrozen) with per-finding masked-softmax attention over the 6
+  A3 slots — full design in
+  `docs/superpowers/specs/2026-08-26-a2-slot-attention-model-design.md`.
+  Also fixed a real gap: `load_training_labels()` still called the old
+  regex labeler (0.686) for weak studies instead of the A1a′-adopted
+  published set (0.8927) — A1a′ decided that swap but never wired it in.
+  Trained for real on Kaggle (fold 0 of 4 only, `group_index=1` centre
+  anchor, none of the Tier B items below): **0.7689 gold macro-AUC** —
+  beats Fase 5's old CV (0.5711) and the real LB reference (0.596) by a
+  wide margin, matches/slightly exceeds Reference A's own full-pipeline
+  OOF (0.7675). One real, unresolved caveat:
+  `medial_meniscus_tear` scored below random (0.458) on this fold's 17
+  gold validation studies — flagged, not yet explained, worth
+  re-checking once the full 4-fold CV pools more gold per finding.
+  Graduated `src/dataset.py::SlotCacheDataset` and
+  `src/model.py::build_backbone()`/`build_multiplane_model()`/
+  `SlotAttentionModel`. `src/train.py::run()` (the submission pipeline)
+  is still `NotImplementedError` — out of scope for graduating this
+  architecture.
 
 ## Next steps
 
-- [ ] **A2** — 6 physical slots (plane × fluid-sensitivity × fat-sat)
-      with per-finding attention, as an A/B against a large random
-      slice bag. Which anchor group(s) (`select_group`'s `group_index`)
-      to feed the model is an open sub-question, deliberately not
-      pre-committed in A3 — see `src/features.py::select_group()`'s
-      docstring.
-- [ ] Tier B items once A2 lands: drop `pos_weight`, EMA at 0.997,
-      re-open augmentation, checkpoint/rank ensembling, RadImageNet
-      domain pretraining (not backbone size — measured null, see the
-      artifact).
+- [ ] Decide: investigate `medial_meniscus_tear` (below-random on fold
+      0's 17 gold), scale A2 from 1 fold to the full 4-fold CV, or start
+      Tier B items — drop `pos_weight`, EMA at 0.997, re-open
+      augmentation, checkpoint/rank ensembling, RadImageNet domain
+      pretraining (not backbone size — measured null, see the artifact),
+      compartment-aware attention (deferred in A2 v1, needs retraining).
+- [ ] Which anchor group(s) (`select_group`'s `group_index`, fixed at 1
+      for A2 v1) to actually use is still an open sub-question — cheap
+      to revisit later, no re-preprocessing needed.

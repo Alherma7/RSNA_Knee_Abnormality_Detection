@@ -2,17 +2,20 @@
 
 masked_finding_attention() is graduated (2026-08-26, A2) — pure tensor
 math, independent of the real DINOv2 backbone, verified here on small
-hand-controlled embeddings. build_backbone()/build_multiplane_model()
-stay NotImplementedError until the Kaggle validation notebook
-(notebooks/05v2_slot_attention_baseline.ipynb) produces real, reviewed
-output — see docs/superpowers/specs/2026-08-26-a2-slot-attention-model-design.md
-section 6. No tests for those yet.
+hand-controlled embeddings. build_backbone()/build_multiplane_model()/
+SlotAttentionModel are graduated too (2026-08-26), after
+notebooks/05v2_slot_attention_baseline.ipynb produced real, reviewed
+output on Kaggle (0.7689 gold macro-AUC, fold 0) — see
+docs/superpowers/specs/2026-08-26-a2-slot-attention-model-design.md
+section 6. Tests here use `pretrained=False` (real architecture, random
+weights) to stay hermetic/fast — no network download, no GPU needed;
+the real-weights/real-data training result isn't re-proven here.
 """
 
 import pytest
 import torch
 
-from src.model import masked_finding_attention
+from src.model import build_backbone, build_multiplane_model, masked_finding_attention
 
 
 def test_masked_finding_attention_ignores_masked_slot_values():
@@ -55,3 +58,41 @@ def test_masked_finding_attention_raises_on_a_fully_masked_row():
 
     with pytest.raises(ValueError):
         masked_finding_attention(embeddings, mask, query, head_weight, head_bias)
+
+
+def test_build_backbone_returns_dinov2_small_with_expected_embed_dim():
+    backbone = build_backbone(pretrained=False)
+    assert backbone.num_features == 384
+
+
+def test_build_multiplane_model_forward_produces_correct_shape():
+    torch.manual_seed(0)
+    model = build_multiplane_model("vit_small_patch14_dinov2.lvd142m", n_findings=12,
+                                    n_slots=6, pretrained=False)
+    images = torch.randn(2, 6, 3, 224, 224)
+    mask = torch.ones(2, 6)
+
+    logits = model(images, mask)
+
+    assert logits.shape == (2, 12)
+    assert torch.isfinite(logits).all()
+
+
+def test_build_multiplane_model_forward_raises_on_wrong_slot_count():
+    model = build_multiplane_model("vit_small_patch14_dinov2.lvd142m", n_findings=12,
+                                    n_slots=6, pretrained=False)
+    images = torch.randn(2, 5, 3, 224, 224)  # 5 slots, not 6
+    mask = torch.ones(2, 5)
+
+    with pytest.raises(ValueError):
+        model(images, mask)
+
+
+def test_build_multiplane_model_forward_raises_on_mismatched_mask_shape():
+    model = build_multiplane_model("vit_small_patch14_dinov2.lvd142m", n_findings=12,
+                                    n_slots=6, pretrained=False)
+    images = torch.randn(2, 6, 3, 224, 224)
+    mask = torch.ones(3, 6)  # batch size doesn't match images
+
+    with pytest.raises(ValueError):
+        model(images, mask)

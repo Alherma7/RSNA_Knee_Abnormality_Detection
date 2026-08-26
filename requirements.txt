@@ -8,9 +8,12 @@ pydicom
 matplotlib
 jupyterlab
 
-# CPU-only here - real GPU training happens on Kaggle, this is just for
-# hermetic unit tests of tensor-shape/masking logic (A2).
+# CPU-only here - real GPU training happens on Kaggle. Used for hermetic
+# unit tests of tensor-shape/masking/model-wiring logic (A2) with
+# pretrained=False (no network download in tests).
 torch
+torchvision
+timm
 
-# Add once the rest of A2 graduates (post-Kaggle validation):
-#   torchvision, monai, timm, snorkel
+# Add once needed:
+#   monai, snorkel
