@@ -611,6 +611,13 @@ or function in this repo.
   (`exp-016`, +0.0086 AUC) — the "3 vs 9" comparison, that source's own
   code comments note, is a real result but confounded on *which* window
   was used, not settled for this narrower-window build.
+- **timm's `vit_small_patch14_dinov2.lvd142m`** (Hugging Face model card,
+  huggingface.co/timm/vit_small_patch14_dinov2.lvd142m)
+  Why: A2's backbone (`notebooks/05v2_slot_attention_baseline.ipynb`) —
+  confirmed 2026-08-26 this is the exact tagged identifier timm needs
+  (the bare name without `.lvd142m` does not resolve); native pretrained
+  resolution is 518×518, interpolated down to our cache's 224×224 via
+  `img_size=224`.
 
 ## Library books (Desktop/LIBROS/)
 
