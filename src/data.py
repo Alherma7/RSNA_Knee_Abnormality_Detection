@@ -17,7 +17,7 @@ import pydicom
 from sklearn.model_selection import GroupKFold
 
 from src import config
-from src.labelers import label_reports, report_group_key
+from src.labelers import report_group_key
 
 
 def build_dicom_cache(raw_dir: Path, split: str = "train") -> Path:
@@ -390,11 +390,13 @@ def load_training_labels(raw_dir: Path, scanner_fingerprints: pd.Series,
     One row per study (all 4,407), indexed by StudyInstanceUID, with one
     column per config.FINDINGS plus `is_gold` and `fold`:
     - The 58 gold studies (load_gold_labels) keep their exact official
-      0/1 labels — never passed through the labeler, since they're
+      0/1 labels — never passed through a labeler, since they're
       already ground truth.
-    - The 4,349 weak studies get graded labels from
-      src.labelers.label_reports() (values in {0.0, 0.5, 1.0}, 0.5 =
-      abstain) using the labeler's negation-scoping fix (2026-08-18).
+    - The 4,349 weak studies get continuous [0, 1] scores from
+      load_published_labels() (the A1a'-adopted set, 0.8927 macro-AUC
+      vs. gold) — NOT src.labelers.label_reports() anymore (that scored
+      0.686, decisively worse; A1a' decided this swap 2026-08-25 but it
+      was never wired in until this change, 2026-08-26).
     - `fold` comes from a plain sklearn GroupKFold (n_folds defaults to
       config.CV_FOLDS), grouped by build_group_ids() over BOTH
       src.labelers.report_group_key() and `scanner_fingerprints` — not
@@ -416,8 +418,8 @@ def load_training_labels(raw_dir: Path, scanner_fingerprints: pd.Series,
       stratification is attempted here: the class-imbalance concern that
       motivated MultilabelStratifiedKFold for the tiny 58-gold CV in
       Fase 4 is far less pressing at n=4,407, and stratifying on a mix
-      of hard 0/1 and graded 0.5-abstention targets isn't well-defined
-      anyway.
+      of hard 0/1 gold and continuous [0, 1] weak targets isn't
+      well-defined anyway.
 
     Graduated 2026-08-18 from
     notebooks/04b_gold_weak_groupkfold.ipynb (report-only grouping),
@@ -426,18 +428,19 @@ def load_training_labels(raw_dir: Path, scanner_fingerprints: pd.Series,
     rows here and train.csv's own official columns, 0 report-template
     groups split across folds. Scanner grouping added 2026-08-25 from
     notebooks/00v2_measurement_gate.ipynb (A0) — see build_group_ids
-    docstring for the real leak numbers this fixes.
+    docstring for the real leak numbers this fixes. Weak-label source
+    swapped 2026-08-26 (A2) from src.labelers.label_reports() to
+    load_published_labels() — validated against the real train.csv/
+    llm_labels_v4_blend.csv locally (4,407 rows, 58 gold, no NaN).
     """
     n_folds = n_folds or config.CV_FOLDS
     reports = load_reports(raw_dir)
     gold = load_gold_labels(raw_dir)
+    published = load_published_labels(raw_dir)
 
     is_gold = reports.index.isin(gold.index)
-    weak_reports = reports.loc[~is_gold].reset_index()
-    weak_labels = label_reports(weak_reports, config.FINDINGS)
-
-    combined = pd.concat([gold[config.FINDINGS], weak_labels[config.FINDINGS]])
-    combined = combined.loc[reports.index]
+    combined = published.reindex(reports.index)[config.FINDINGS].copy()
+    combined.loc[gold.index, config.FINDINGS] = gold[config.FINDINGS]
     combined["is_gold"] = is_gold
 
     group_keys = reports["Report"].apply(report_group_key)

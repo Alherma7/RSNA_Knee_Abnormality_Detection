@@ -159,15 +159,20 @@ def test_load_gold_labels_only_returns_fully_labeled_rows(tmp_path):
     assert (gold.loc["gold2"] == 0.0).all()
 
 
-def test_load_training_labels_keeps_gold_labels_exact_and_labels_weak_rows(tmp_path):
+def test_load_training_labels_uses_published_labels_for_weak_rows_and_official_values_for_gold(tmp_path):
     raw_dir = _write_train_csv(tmp_path, [
         _gold_row("gold1", "There is a complete tear of the ACL.", value=0.0),
-        _weak_row("weak1", "There is a complete tear of the ACL."),
-        _weak_row("weak2", "The ACL is intact. No other abnormality."),
+        _weak_row("weak1", "Some report."),
+        _weak_row("weak2", "Another report."),
     ])
-    # gold1's official columns are all 0.0 above (an inconsistent fixture on
-    # purpose): load_training_labels must trust the official column, not
-    # re-derive it from the report text via the labeler.
+    # gold1's published-set row deliberately disagrees with its official
+    # column (1.0 vs. gold1's real 0.0 above): load_training_labels must
+    # trust the official column for gold rows, not the published set.
+    _write_published_labels_csv(raw_dir, [
+        {"StudyInstanceUID": "gold1", **{c: 1.0 for c in LABEL_COLS}},
+        {"StudyInstanceUID": "weak1", **{c: 0.7 for c in LABEL_COLS}},
+        {"StudyInstanceUID": "weak2", **{c: 0.2 for c in LABEL_COLS}},
+    ])
     no_scanner_data = pd.Series(
         [None, None, None], index=["gold1", "weak1", "weak2"]
     )
@@ -178,10 +183,10 @@ def test_load_training_labels_keeps_gold_labels_exact_and_labels_weak_rows(tmp_p
     assert bool(combined.loc["gold1", "is_gold"]) is True
     assert bool(combined.loc["weak1", "is_gold"]) is False
 
-    # weak1's report text alone would score acl_injury=1.0 via the labeler,
-    # confirming it actually ran the labeler rather than leaving it blank.
-    assert combined.loc["weak1", "acl_injury"] == 1.0
-    assert combined.loc["weak2", "acl_injury"] == 0.0
+    # weak1/weak2 come from the published label set now, not the old
+    # regex labeler -- confirms the swap actually happened.
+    assert combined.loc["weak1", "acl_injury"] == 0.7
+    assert combined.loc["weak2", "acl_injury"] == 0.2
 
 
 def test_load_training_labels_never_splits_a_shared_report_template_across_folds(tmp_path):
@@ -191,6 +196,10 @@ def test_load_training_labels_never_splits_a_shared_report_template_across_folds
         _weak_row("weak1", shared_text),
         _weak_row("weak2", "Complete tear of the ACL with retraction."),
         _weak_row("weak3", "Complex tear of the medial meniscus."),
+    ])
+    _write_published_labels_csv(raw_dir, [
+        {"StudyInstanceUID": sid, **{c: 0.5 for c in LABEL_COLS}}
+        for sid in ["gold1", "weak1", "weak2", "weak3"]
     ])
     no_scanner_data = pd.Series(
         [None, None, None, None], index=["gold1", "weak1", "weak2", "weak3"]
@@ -212,6 +221,10 @@ def test_load_training_labels_never_splits_a_shared_scanner_fingerprint_across_f
         _weak_row("weak1", "Mild degenerative change."),
         _weak_row("weak2", "Complete tear of the ACL with retraction."),
         _weak_row("weak3", "Complex tear of the medial meniscus."),
+    ])
+    _write_published_labels_csv(raw_dir, [
+        {"StudyInstanceUID": sid, **{c: 0.5 for c in LABEL_COLS}}
+        for sid in ["gold1", "weak1", "weak2", "weak3"]
     ])
     shared_fp = ("SiemensCo", "Avanto", "General Hospital", "SN1", "1.5", "MRI1")
     scanner_data = pd.Series(
