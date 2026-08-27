@@ -158,12 +158,16 @@ offers no such cross-check.
   notebook. All 4 folds already exist and are the real pooled-4-fold-CV
   checkpoints (0.7512 OOF) — ensembling them is close to free and is
   standard practice for k-fold-trained checkpoints.
-- Checkpoints delivered to the submission notebook as one Kaggle Dataset
-  (same convention as `CHECKPOINT_PATHS` in `06v2`), plus a
-  `metadata.json` (findings list, `OFFICIAL_LABEL_COLUMNS`, `cv_folds`,
-  backbone name, reference pooled OOF macro-AUC 0.7512) — mirrors the
-  `CHECKPOINTS_MOUNT/metadata.json` pattern the retired `06` notebook
-  already used successfully.
+- Checkpoints delivered to the submission notebook as **4 separate
+  Kaggle Datasets, one per fold** (`CHECKPOINT_PATHS`, same convention
+  `06v2` already used for folds 0-2 — the user's own checkpoint uploads
+  are per-fold, not bundled). `FINDINGS`/`OFFICIAL_LABEL_COLUMNS`/
+  `CV_FOLDS`/`GROUP_INDEX` are hardcoded directly in the notebook
+  (matching `05v2`/`06v2`'s own convention) rather than read from a
+  bundled `metadata.json` — revised 2026-08-27 after the original
+  one-Dataset-plus-metadata.json design (mirroring the retired `06`
+  notebook's `CHECKPOINTS_MOUNT/metadata.json` pattern) turned out not
+  to match how the user had actually uploaded the checkpoints.
 
 ## 5. Submission assembly and error handling
 
