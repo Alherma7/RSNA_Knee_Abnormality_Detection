@@ -5,9 +5,11 @@ cells cell-10/cell-12/cell-14) per
 docs/superpowers/specs/2026-08-27-a4-submission-pipeline-design.md, section 7.
 """
 
+import torch
+
 import pandas as pd
 
-from src.preprocess import annotate_series_headers
+from src.preprocess import annotate_series_headers, normalise_laterality
 
 
 def _series_row(**overrides):
@@ -87,3 +89,37 @@ def test_annotate_series_headers_tolerates_missing_column_keys():
     assert bool(annotated.loc[0, "fatsat"]) is False
     assert annotated.loc[0, "weight"] == "UNK"
     assert bool(annotated.loc[0, "fluid"]) is False
+
+
+def test_normalise_laterality_flips_coronal_horizontally_for_right_knee():
+    img = torch.arange(2 * 2 * 3, dtype=torch.float32).reshape(2, 2, 3)
+
+    flipped = normalise_laterality(img, "Coronal", "R")
+
+    assert torch.equal(flipped, torch.flip(img, dims=[-1]))
+    assert not torch.equal(flipped, img)
+
+
+def test_normalise_laterality_flips_axial_horizontally_for_right_knee():
+    img = torch.arange(2 * 2 * 3, dtype=torch.float32).reshape(2, 2, 3)
+
+    flipped = normalise_laterality(img, "Axial", "R")
+
+    assert torch.equal(flipped, torch.flip(img, dims=[-1]))
+
+
+def test_normalise_laterality_reverses_slice_order_for_sagittal_right_knee():
+    img = torch.arange(2 * 2 * 3, dtype=torch.float32).reshape(2, 2, 3)
+
+    flipped = normalise_laterality(img, "Sagittal", "R")
+
+    assert torch.equal(flipped, torch.flip(img, dims=[0]))
+    assert not torch.equal(flipped, torch.flip(img, dims=[-1]))
+
+
+def test_normalise_laterality_leaves_left_and_unknown_unchanged():
+    img = torch.arange(2 * 2 * 3, dtype=torch.float32).reshape(2, 2, 3)
+
+    for plane in ("Sagittal", "Coronal", "Axial"):
+        assert torch.equal(normalise_laterality(img, plane, "L"), img)
+        assert torch.equal(normalise_laterality(img, plane, "unknown"), img)

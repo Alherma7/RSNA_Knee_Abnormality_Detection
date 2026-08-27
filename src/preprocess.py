@@ -19,6 +19,7 @@ import re
 
 import numpy as np
 import pandas as pd
+import torch
 
 # Source: cell-10/cell-12 of the reference notebook above.
 _SEP = re.compile(r"[_\-.]")
@@ -92,3 +93,30 @@ def annotate_series_headers(series_df: pd.DataFrame) -> pd.DataFrame:
     )
     df["fluid"] = np.isin(df["weight"], ["PD", "T2"])
     return df
+
+
+def normalise_laterality(img: "torch.Tensor", plane: str, laterality: str) -> "torch.Tensor":
+    """Map every knee onto a left-knee convention.
+
+    Four of the twelve findings are medial/lateral pairs, and medial is
+    defined against the body midline — which side of the *image* it
+    falls on depends on which knee was scanned. Coronal and axial views
+    mirror under a horizontal flip; sagittal stacks don't (each slice is
+    unchanged by mirroring) — what differs is the direction the stack
+    traverses the joint, so the slice order is reversed instead.
+
+    Where laterality is unresolved (`"unknown"`, or already `"L"`) the
+    volume is left alone: a wrong flip is worse than no flip.
+
+    `img`: `(group, H, W)`, one anchor's stacked physically-adjacent
+    slices.
+
+    Source: stevenleehans's `normalise_laterality()`,
+    data/raw/_reference_kernels/rsna-knee-500gb-to-11gib-cpu-pixel-cache.ipynb
+    (cell-14) — same source A3's pre-built cache was built with.
+    """
+    if laterality != "R":
+        return img
+    if plane in ("Coronal", "Axial"):
+        return torch.flip(img, dims=[-1])
+    return torch.flip(img, dims=[0])
