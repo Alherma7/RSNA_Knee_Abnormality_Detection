@@ -106,15 +106,30 @@ notebooks going forward, one per plan item.
   `SlotAttentionModel`. `src/train.py::run()` (the submission pipeline)
   is still `NotImplementedError` — out of scope for graduating this
   architecture.
+- **A2 v1, pooled 4-fold CV**: fold 0 alone (0.7689) was optimistic — an
+  easier split. Trained folds 1-3 for real on Kaggle (fold 1: 0.7480,
+  fold 2: 0.8334, fold 3: 0.8282) and pooled all 4 folds' OOF predictions
+  over the full 58 gold studies: **0.7512 macro-AUC — the trustworthy A2
+  v1 baseline going forward**, superseding the single-fold number. Both
+  fold-0-only caveats resolved as hypothesized small-sample artifacts:
+  `medial_meniscus_tear` 0.458 (below random, 17 gold) → **0.6635** pooled
+  (58 gold); `oa_lateral_compartment` undefined (single class, 17 gold) →
+  **0.6325** pooled. No new `src/` graduation — this only recomputes the
+  evaluation of the already-graduated A2 v1 architecture on more gold
+  data; weakest pooled findings are `mcl_injury` (0.6145) and `synovitis`
+  (0.6559).
 
 ## Next steps
 
-- [ ] Decide: investigate `medial_meniscus_tear` (below-random on fold
-      0's 17 gold), scale A2 from 1 fold to the full 4-fold CV, or start
-      Tier B items — drop `pos_weight`, EMA at 0.997, re-open
-      augmentation, checkpoint/rank ensembling, RadImageNet domain
-      pretraining (not backbone size — measured null, see the artifact),
-      compartment-aware attention (deferred in A2 v1, needs retraining).
+- [x] Scale A2 from 1 fold to the full 4-fold CV — done above, resolved
+      the `medial_meniscus_tear`/`oa_lateral_compartment` fold-0
+      artifacts.
+- [ ] Decide: investigate the weakest pooled findings (`mcl_injury`
+      0.6145, `synovitis` 0.6559), or start Tier B items — drop
+      `pos_weight`, EMA at 0.997, re-open augmentation, checkpoint/rank
+      ensembling, RadImageNet domain pretraining (not backbone size —
+      measured null, see the artifact), compartment-aware attention
+      (deferred in A2 v1, needs retraining).
 - [ ] Which anchor group(s) (`select_group`'s `group_index`, fixed at 1
       for A2 v1) to actually use is still an open sub-question — cheap
       to revisit later, no re-preprocessing needed.
