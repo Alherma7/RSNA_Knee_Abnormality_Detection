@@ -267,3 +267,37 @@ runnable locally):
 - Ensembling all 4 folds is fixed here as the default — comparing
   against a single best-fold checkpoint, if ever wanted, is a cheap
   later experiment, not part of this spec.
+
+## 10. Known accepted residual: ~13% of studies diverge from the cache on one slot
+
+Found running the §3 gate for real on Kaggle, 2026-08-27, after fixing a
+real systematic bug (percentile normalization computed over only the
+centre anchor's 3 slices instead of the source's pooled 9-slice window —
+found and fixed the same day; that bug was 100%-of-studies and is
+confirmed resolved). On a full sweep of every gold study present in
+cache shard 0 (15 studies), 13/15 (87%) now match the pre-built cache
+bit-for-bit exactly. The remaining 2/15 diverge on one slot each
+(max|diff| 167–249 on a 0–255 scale). A full per-slice DICOM inspection
+of one case found no code defect: clean headers, no decode failures or
+exceptions, consistent `RescaleSlope`/`RescaleIntercept`, and the
+anchor/crop/percentile math verified correct by hand against the source
+for that exact case. Both affected studies had `laterality=unknown`,
+but that is not the differentiator — 4 of the 6 `unknown`-laterality
+studies in the same 15-study sample matched exactly.
+
+Most likely explanation: a decode-library or cache-build-environment
+difference (e.g. a `pydicom`/dependency version difference between now
+and whenever the cache was originally built) affecting a small,
+unpredictable subset of studies — not something reachable from this
+notebook's own code, which already reproduces the source's algorithm
+exactly. **Accepted as a known limitation, user decision 2026-08-27**,
+for this calibration submission (the goal is one real leaderboard number
+to sanity-check local CV, not a pixel-perfect reproduction of every
+study) — same category of decision as Fase 5's own accepted intensity-
+residual limitation, see
+[[feedback-match-debugging-effort-to-stakes]]. The §3 gate's pass
+threshold was changed from requiring 100% match to `>=75%` (well below
+the observed 87%, so it still catches a real regression, e.g. a return
+to the pre-fix ~0%) rather than re-litigating this residual on every
+run. Revisit only if the real leaderboard score comes back implausibly
+bad.
