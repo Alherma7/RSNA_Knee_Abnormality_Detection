@@ -7,9 +7,10 @@ Fase 5's calibration submission scored 0.596, while local CV has since
 moved from 0.5711 to A2 v1's pooled 0.7512; a real LB number is the only
 way to confirm that improvement generalizes to hidden data).
 **Depends on:** A2 v1 (done, pooled 4-fold gold macro-AUC 0.7512, all 4
-fold checkpoints in `models/`), A0b (`geometric_slice_order()`, reused
-here), A3 (slot definitions/config, reused here — but NOT the pre-built
-cache itself, see §1).
+fold checkpoints in `models/`), A0b (`geometric_slice_order()` — informs
+this design, but see §3: the notebook ports the source's `order_slices()`
+rather than reusing ours), A3 (slot definitions/config, reused here —
+but NOT the pre-built cache itself, see §1).
 
 ## 1. Why this needs new work, not just reuse
 
@@ -67,6 +68,19 @@ corpus-wide batch builds — not needed for a per-study inference call),
 and validates against the pre-built train cache before trusting on
 hidden data:
 
+- **Header probe** — `probe()` + `HDR_TAGS` (cell `cell-13`): one
+  `stop_before_pixels=True` read of each series' **middle** slice,
+  merged onto that study's `*_series.csv` rows. This runs *first* and is
+  not optional: the CSVs carry only `StudyInstanceUID`,
+  `SeriesInstanceUID`, `Fluid_Sensitive`, `Fat_Suppression`,
+  `Anatomical_Plane` — none of the `SeriesDescription`/`SequenceName`/
+  `ScanOptions`/`ScanningSequence`/`RepetitionTime`/`EchoTime` fields the
+  slot classification needs, nor the `Laterality`/`ImageLaterality`/
+  `StudyDescription`/`BodyPartExamined` fields the laterality resolution
+  needs. Without it every series classifies as
+  `fatsat=False`/`weight=UNK`/`fluid=False` and the 6-slot recovery
+  collapses to at most 2 wrong slots. It also supplies `n_slices` (the
+  slot tie-break) for free.
 - **Slot recovery** — `annotate()` + `pick_slots()`
   (`data/raw/_reference_kernels/rsna-knee-500gb-to-11gib-cpu-pixel-cache.ipynb`,
   cells `cell-10`/`cell-12`): recovers fat-suppression (`ScanOptions`
@@ -78,13 +92,21 @@ hidden data:
   fat-suppression rule as the cache — including the T1 scarce-slot
   fallback (any non-fat-sat series in-plane if the exact match is
   missing).
-- **Slice ordering** — reuses our own already-validated
-  `src/data.py::geometric_slice_order()` (A0b), which implements the
-  same algorithm as the source's `order_slices()` (project
+- **Slice ordering** — ports the source's own `order_slices()` (project
   `ImagePositionPatient` onto the `ImageOrientationPatient` normal, with
-  a `SliceLocation` → `InstanceNumber` → filename fallback chain) — no
-  need to re-port this piece, ours is already tested against all 58 real
-  gold studies.
+  a `SliceLocation` → `InstanceNumber` → filename fallback chain). It
+  deliberately does **not** reuse `src/data.py::geometric_slice_order()`
+  (A0b), despite the family resemblance: the source's chain is
+  **all-or-nothing per series** (geometry only if *every* file in the
+  series has a position tag, otherwise the whole series falls through
+  wholesale to the next method), while `src/data.py`'s version picks its
+  fallback key **per file**, which in degenerate series mixes
+  geometry/`SliceLocation`/`InstanceNumber` within one series and yields
+  a different order. The pre-built A3 cache this decode is validated
+  against was built with the all-or-nothing chain, so matching it
+  exactly is what parity requires — the notebook's copy is intentionally
+  the source's behaviour, not ours, and must not be "fixed" into
+  matching `src/data.py`.
 - **Pixel decode** — `read_slot()` (cell `cell-14`): `group=3`
   physically-adjacent slices around the centre anchor
   (`config.SLOT_CACHE_GROUP_SIZE`/`GROUP_INDEX=1`, matching A2 v1's
@@ -94,9 +116,16 @@ hidden data:
   as the cache's default), 1st–99th percentile normalization, bilinear
   resize to `config.SLOT_CACHE_IMG_SIZE=224`, output uint8.
 - **Laterality normalization** — `normalise_laterality()` (cell
-  `cell-14`): resolved side (`Laterality`/`ImageLaterality` tag → text
-  fallback on `SeriesDescription`; geometric fallback stays OFF, matching
-  the source's own default) maps every knee onto a left-knee convention
+  `cell-14`): the side is resolved **once per study** (the source's
+  `resolve_laterality(g)` runs over a `StudyInstanceUID` groupby group,
+  never per series — the `Laterality` tag is missing on roughly half the
+  series, so per-series resolution would give one study a mixed flip
+  convention across its own slots), from `Laterality` tag →
+  `ImageLaterality` → a multilingual side-word search across
+  `SeriesDescription` + `StudyDescription` + `BodyPartExamined` that
+  returns *unknown* on contradiction; the geometric fallback stays OFF,
+  matching the source's own default. That resolved side maps every knee
+  onto a left-knee convention
   — right knees get a horizontal flip (coronal/axial) or reversed slice
   order (sagittal); unresolved laterality is left alone (a wrong flip is
   worse than no flip, the presence mask already tells the model how much
