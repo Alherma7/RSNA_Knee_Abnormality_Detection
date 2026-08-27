@@ -184,21 +184,18 @@ itself on a real scored run):
   assert row count equals `len(test.csv)`, assert `StudyInstanceUID` is
   unique. Write to `/kaggle/working/submission.csv`.
 
-## 6. Open risk, not blocking design: `timm` with no internet
+## 6. `timm` with no internet — RESOLVED, preinstalled
 
-Training notebooks `pip install -q timm` — that will fail in the scored
-rerun (internet disabled). `pretrained=False` avoids needing to
+Training notebooks `pip install -q timm`, which would fail in the
+scored rerun (internet disabled). `pretrained=False` avoids needing to
 *download weights* (we load our own fine-tuned `state_dict` regardless),
-but the **package itself** still needs to be importable offline. Two
-fallbacks if it isn't preinstalled on Kaggle's static image: (a) a
-Kaggle "Utility Script"/wheel Dataset attached to the submission
-notebook, installed via `pip install --no-index --find-links=...`, or
-(b) vendoring just the `timm` classes actually used
-(`vit_small_patch14_dinov2` construction) to drop the dependency
-entirely. **Verify directly on Kaggle before the real submission run**
-(try `import timm` in a notebook with internet toggled off) — this is
-not resolvable from outside Kaggle, and does not change anything else in
-this design, so it is not blocking the implementation plan.
+but the **package itself** still needs to be importable offline.
+**Verified directly on Kaggle 2026-08-27** (Section 3's `timm` check,
+run for real): `timm` is preinstalled on Kaggle's current image —
+`"timm already importable, no install needed: 1.0.26"` — no `pip
+install` attempted, no internet dependency at all. The two fallbacks
+considered (an offline wheel Dataset, or vendoring the
+`vit_small_patch14_dinov2` construction) turned out to be unnecessary.
 
 ## 7. New notebook and `src/` disposition
 
@@ -258,7 +255,6 @@ runnable locally):
 
 ## 9. Open items carried forward, not blocking this spec
 
-- `timm`-offline resolution (§6) — verify on Kaggle, pick (a) or (b).
 - Real hidden test set size and exact rerun time budget are unknown
   beyond "<=9h" — the design does not assume a size; if decode time
   becomes a real constraint once the true count is known, that's a
