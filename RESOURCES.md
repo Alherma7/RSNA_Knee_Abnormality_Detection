@@ -611,6 +611,15 @@ or function in this repo.
   (`exp-016`, +0.0086 AUC) — the "3 vs 9" comparison, that source's own
   code comments note, is a real result but confounded on *which* window
   was used, not settled for this narrower-window build.
+- **stevenleehans/rsna-knee-500gb-to-11gib-cpu-pixel-cache** — reused again for A4
+  Why: A4's live test-time decode (`notebooks/07v1_a2_submission_inference.ipynb`,
+  `src/preprocess.py`) ports the same source's `annotate()`/`pick_slots()`/
+  `read_slot()`/`normalise_laterality()` (cells cell-10/cell-12/cell-14),
+  adapted for single-study synchronous use — the pre-built cache itself
+  cannot cover the hidden test set in a Code Competition (built before
+  the test set existed), so the decode step is re-run live at scoring
+  time instead, validated against the pre-built train cache's pixels
+  before being trusted (`notebooks/07v1_...` section 2).
 - **timm's `vit_small_patch14_dinov2.lvd142m`** (Hugging Face model card,
   huggingface.co/timm/vit_small_patch14_dinov2.lvd142m)
   Why: A2's backbone (`notebooks/05v2_slot_attention_baseline.ipynb`) —
