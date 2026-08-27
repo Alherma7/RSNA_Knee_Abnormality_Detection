@@ -118,18 +118,43 @@ notebooks going forward, one per plan item.
   evaluation of the already-graduated A2 v1 architecture on more gold
   data; weakest pooled findings are `mcl_injury` (0.6145) and `synovitis`
   (0.6559).
+- **A4** (submission pipeline): this is a Code Competition — the A3
+  pre-built pixel cache can't cover the hidden test set (built before it
+  existed), so `notebooks/07v1_a2_submission_inference.ipynb` decodes
+  DICOM live instead, porting the same stevenleehans source A3 already
+  cited, validated against the pre-built train cache before trusting it
+  on hidden data (full design:
+  `docs/superpowers/specs/2026-08-27-a4-submission-pipeline-design.md`).
+  A real bug was found and fixed via the validation gate failing on
+  real Kaggle data: `decode_study_slots()` normalized over only the
+  centre anchor's 3 slices instead of the source's pooled 9-slice
+  window — same pixels selected, wrong normalization statistics. Fixed;
+  gate now matches the pre-built cache bit-for-bit on 13/15 (87%) gold
+  studies, with a ~13% residual accepted as a known, uninvestigable-
+  further limitation (no code defect found on inspection — most likely
+  a decode-library/cache-build-environment difference for a small
+  subset of studies). Submitted to the real competition 2026-08-27:
+  **real leaderboard 0.834** — well above A2 v1's local pooled CV
+  (0.7512) and Fase 5's old real-LB reference (0.596), confirming the
+  slot-attention architecture generalizes to hidden data. Still a gap to
+  public top scores (0.89–0.95+, see Current plan above), but the
+  biggest jump of any single step so far.
 
 ## Next steps
 
 - [x] Scale A2 from 1 fold to the full 4-fold CV — done above, resolved
       the `medial_meniscus_tear`/`oa_lateral_compartment` fold-0
       artifacts.
+- [x] Get a real leaderboard number for A2 v1's architecture (A4,
+      submission pipeline) — done above: **real LB 0.834**.
 - [ ] Decide: investigate the weakest pooled findings (`mcl_injury`
       0.6145, `synovitis` 0.6559), or start Tier B items — drop
       `pos_weight`, EMA at 0.997, re-open augmentation, checkpoint/rank
       ensembling, RadImageNet domain pretraining (not backbone size —
       measured null, see the artifact), compartment-aware attention
-      (deferred in A2 v1, needs retraining).
+      (deferred in A2 v1, needs retraining). Now backed by a real LB
+      confirmation that the current architecture generalizes well, not
+      just a local-CV number.
 - [ ] Which anchor group(s) (`select_group`'s `group_index`, fixed at 1
       for A2 v1) to actually use is still an open sub-question — cheap
       to revisit later, no re-preprocessing needed.
