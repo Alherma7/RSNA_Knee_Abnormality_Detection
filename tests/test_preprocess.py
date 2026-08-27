@@ -75,3 +75,15 @@ def test_annotate_series_headers_fluid_flag_matches_pd_and_t2_only():
     annotated = annotate_series_headers(df)
 
     assert list(annotated["fluid"]) == [False, True, True]
+
+
+def test_annotate_series_headers_tolerates_missing_column_keys():
+    """Missing header columns are tolerated — rows with no header information
+    should produce sensible defaults: fatsat=False, weight=UNK, fluid=False."""
+    df = pd.DataFrame([{"SeriesInstanceUID": "s1"}])
+
+    annotated = annotate_series_headers(df)
+
+    assert bool(annotated.loc[0, "fatsat"]) is False
+    assert annotated.loc[0, "weight"] == "UNK"
+    assert bool(annotated.loc[0, "fluid"]) is False
