@@ -627,6 +627,64 @@ or function in this repo.
   (the bare name without `.lvd142m` does not resolve); native pretrained
   resolution is 518×518, interpolated down to our cache's 224×224 via
   `img_size=224`.
+- **This competition's live discussion, several threads found 2026-08-28**
+  (Kaggle, read via browser — not downloaded, per
+  [[feedback-no-kaggle-downloads]] — see
+  [[reference-kaggle-forum-search-method]]): starkhushi's
+  "Why everyone's Synovitis AUC is stuck around 0.6-0.7" (discussion/737566,
+  weak-label agreement ~0.79 on Synovitis, independently matching our own
+  0.7903, and a RadImageNet-pretrained encoder reaching 0.78 vs. 0.62-0.72
+  for ImageNet-pretrained models); Beyonder's unanswered host question on
+  Synovitis/Effusion grading criteria (discussion/737155); Berat Kirbiyik's
+  "What we've ruled out at 0.79 OOF" (discussion/737597, controlled
+  ablations on a near-identical slot-attention architecture: EMA/mixup/
+  longer training within noise, asymmetric loss badly hurt, centre-adjacent
+  slices beat spread slices, and the same large/discrete-vs-thin/small
+  error pattern this project measured); Oscar Yáñez Feijóo's "What is the
+  real bottleneck" thread (discussion/735826, community consensus on
+  label quality/image pipeline over backbone capacity, and real reports of
+  gold labels contradicting their own report text).
+- **wguesdon/rsna-knee-dinov2-at-meniscus-resolution** (Kaggle notebook,
+  read via browser 2026-08-28, not downloaded — public score 0.815, solo)
+  Why: a rigorous Nyquist-sampling argument for DINOv2 ViT-S/14 (a `d`-mm
+  feature needs pixel pitch `<= d/2` to survive resizing), verified both
+  analytically and against the frozen backbone empirically. Applied to
+  our own A3 cache (224px/130mm crop, 0.580 mm/px, ~8.1mm/DINOv2-patch-
+  token): resolves the upper end of the 1-3mm meniscal-tear range but not
+  the smallest tears. 336px measured as the resolution sweet spot for this
+  backbone (448px tested, no further gain) — a candidate re-render setting
+  for A3 if the meniscus-tear architecture path is chosen. The notebook's
+  own end-to-end score (0.815) is below our A4 real LB (0.834), so this is
+  a diagnostic mechanism to borrow, not an end-to-end recipe.
+- **dreaddevelopment/knee-mri-twelve-findings-from-a-single-model**
+  (Kaggle notebook, read via browser 2026-08-28, not downloaded — public
+  score 0.924, single non-ensembled model, 0.9167 gold macro-AUC on our
+  same 58 gold studies held out of its training)
+  Why: real code (not just discussion prose) for two structural
+  differences from our A2 v1: (1) 64 slices/study across 5 slots (vs. our
+  18, 6 slots × 3 slices, centre anchor only) and slices sampled evenly
+  across 6-94% of the stack rather than only from the centre; (2) direct,
+  measured claim in the notebook's own words that centre-only slice
+  selection "measurably cost accuracy" specifically on the collateral
+  ligaments and lateral meniscus — the outer slices, not the centre ones,
+  is where they sit. Directly implicates A3's `group_index=1` (centre-
+  anchor-only) choice as a plausible real contributor to this project's
+  own low `mcl_injury`/`lateral_meniscus_tear` pooled AUC, beyond the
+  small-gold-sample noise already identified — see
+  [[project-rsna-phase-status]] for the full reasoning. 336px images,
+  140mm crop (close to our 130mm) — independently arrives at the same
+  336px resolution sweet spot as the notebook above, via a different
+  (CNN/CoAtNet, not ViT) architecture.
+- **tonylica/rsna-knee-dino-radimagenet-rank-ensemble** (Kaggle notebook,
+  read via browser 2026-08-28, not downloaded — public score 0.92,
+  35-checkpoint community mega-ensemble)
+  Why: confirms RadImageNet-pretrained heads (10 of 35 ensemble members,
+  sharing one RadImageNet ResNet-50 encoder) are a real, still-current,
+  actively-used technique among top scorers — corroborates the synovitis
+  RadImageNet lead from starkhushi's discussion post above with real code,
+  not just one person's anecdote. Heavily forked/community-built (not a
+  clean from-scratch reference), and doesn't isolate RadImageNet's
+  per-finding contribution on its own.
 
 ## Library books (Desktop/LIBROS/)
 
