@@ -105,3 +105,48 @@ def select_group(cache_slot_stack: np.ndarray, group_index) -> np.ndarray:
     size = config.SLOT_CACHE_GROUP_SIZE
     groups = [cache_slot_stack[..., g * size:(g + 1) * size, :, :] for g in group_index]
     return np.concatenate(groups, axis=-3)
+
+
+def expand_slot_groups(cache_slot_stack: np.ndarray, slot_mask: np.ndarray) -> "tuple[np.ndarray, np.ndarray]":
+    """Turn one study's 6 real slots x 3 anchor groups into 18 independent
+    pseudo-slots, instead of `select_group`'s single chosen group per slot.
+
+    `cache_slot_stack`: `(n_slots, 9, H, W)` — one study, every slot's full
+    9-slice pool (from `src.data.load_slot_cache_shard()`'s `cache`).
+    `slot_mask`: `(n_slots,)` — one presence bit per real slot (the cache
+    has no per-group presence, only per-slot: a slot's 3 groups are always
+    jointly present or jointly absent).
+
+    Returns `(images, mask)`:
+    - `images`: `(n_slots * SLOT_CACHE_N_GROUPS, SLOT_CACHE_GROUP_SIZE, H, W)`,
+      **slot-major order** — pseudo-slot index `s * SLOT_CACHE_N_GROUPS + g`
+      for real slot `s` and group `g`, i.e.
+      `slot0_g0, slot0_g1, slot0_g2, slot1_g0, ...`.
+    - `mask`: `(n_slots * SLOT_CACHE_N_GROUPS,)`, each real slot's bit
+      replicated `SLOT_CACHE_N_GROUPS` times.
+
+    Motivation: A2 v1 fixes `group_index=1` (centre anchor only). The
+    pretrained backbone expects exactly 3 input channels, so the 3 groups
+    can't be concatenated on the channel axis the way `select_group([0,1,2])`
+    does (that produces a 9-channel image) — each group must become its
+    own 3-channel pseudo-slot instead, letting the model's existing
+    per-finding masked attention (already generic over slot count) learn
+    which group matters per finding.
+
+    Calls `select_group()` internally for the per-group slice extraction
+    rather than re-implementing that indexing.
+
+    Graduated 2026-08-29 from notebooks/09v1_a2v2_multigroup_baseline.ipynb
+    / notebooks/10v1_a2v2_pooled_4fold_cv.ipynb (A2 v2) — real pooled
+    4-fold gold macro-AUC 0.8009, beating A2 v1's 0.7512 pooled baseline;
+    see docs/superpowers/specs/2026-08-28-a2v2-multigroup-slot-attention-design.md
+    section 5.2 for the full gate.
+    """
+    n_slots = cache_slot_stack.shape[0]
+    h, w = cache_slot_stack.shape[-2:]
+    n_groups = config.SLOT_CACHE_N_GROUPS
+    groups = [select_group(cache_slot_stack, g) for g in range(n_groups)]
+    stacked = np.stack(groups, axis=1)  # (n_slots, n_groups, group_size, H, W)
+    images = stacked.reshape(n_slots * n_groups, config.SLOT_CACHE_GROUP_SIZE, h, w)
+    mask = np.repeat(slot_mask, n_groups)
+    return images, mask

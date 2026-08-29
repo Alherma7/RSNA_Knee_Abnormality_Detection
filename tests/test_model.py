@@ -96,3 +96,22 @@ def test_build_multiplane_model_forward_raises_on_mismatched_mask_shape():
 
     with pytest.raises(ValueError):
         model(images, mask)
+
+
+def test_build_multiplane_model_forward_with_18_pseudo_slots():
+    # A2 v2 (graduated 2026-08-29): n_slots=18 (all 3 anchor groups on all
+    # 6 slots, via src.features.expand_slot_groups()) needs zero model
+    # code changes -- n_slots is a plain constructor parameter, verified
+    # here the same way n_slots=6 already was. Real pooled 4-fold gold
+    # macro-AUC 0.8009 (docs/superpowers/specs/2026-08-28-a2v2-multigroup-
+    # slot-attention-design.md section 5.2).
+    torch.manual_seed(0)
+    model = build_multiplane_model("vit_small_patch14_dinov2.lvd142m", n_findings=12,
+                                    n_slots=18, pretrained=False)
+    images = torch.randn(2, 18, 3, 224, 224)
+    mask = torch.ones(2, 18)
+
+    logits = model(images, mask)
+
+    assert logits.shape == (2, 12)
+    assert torch.isfinite(logits).all()

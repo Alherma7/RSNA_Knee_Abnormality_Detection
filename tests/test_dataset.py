@@ -6,6 +6,13 @@ construction trained for real on Kaggle (0.7689 gold macro-AUC, fold 0)
 — that real-data training result isn't re-proven here, only the
 Dataset's own indexing/alignment logic on small synthetic cache shards
 (same technique as tests/test_data.py's load_slot_cache_shard tests).
+
+`expand_groups=True` (A2 v2) is graduated 2026-08-29, from
+notebooks/09v1_a2v2_multigroup_baseline.ipynb /
+10v1_a2v2_pooled_4fold_cv.ipynb, where it trained for real on Kaggle
+(pooled 4-fold gold macro-AUC 0.8009, beating A2 v1's 0.7512 pooled
+baseline — docs/superpowers/specs/2026-08-28-a2v2-multigroup-slot-attention-design.md
+section 5.2).
 """
 
 import numpy as np
@@ -13,7 +20,7 @@ import pandas as pd
 import pytest
 import torch
 
-from src.config import FINDINGS
+from src.config import FINDINGS, SLOT_CACHE_N_GROUPS
 from src.dataset import SlotCacheDataset
 
 
@@ -108,3 +115,83 @@ def test_raises_when_labels_df_does_not_cover_every_cache_study(tmp_path):
 
     with pytest.raises(ValueError):
         SlotCacheDataset(tmp_path, ["train.s00of01"], _labels_df(["s0"]))
+
+
+def test_expand_groups_returns_18_pseudo_slots(tmp_path):
+    study_ids = ["s0"]
+    _write_shard(tmp_path, "train.s00of01", study_ids)
+    ds = SlotCacheDataset(tmp_path, ["train.s00of01"], _labels_df(study_ids), expand_groups=True)
+
+    images, mask, label = ds[0]
+
+    assert images.shape == (6 * SLOT_CACHE_N_GROUPS, 3, 4, 4)
+    assert mask.shape == (6 * SLOT_CACHE_N_GROUPS,)
+    assert label.shape == (len(FINDINGS),)
+
+
+def test_expand_groups_matches_group_index_selection_per_group(tmp_path):
+    # Same fixture as test_group_index_selects_the_requested_anchor:
+    # group 0/1/2 filled with 0/1/2 respectively -- with expand_groups=True
+    # every slot's 3 pseudo-slots should read out those same 3 constants,
+    # in slot-major order (pseudo-slot g == group g, for every one of the
+    # 6 real slots, since every slot has identical content in this fixture).
+    study_ids = ["s0"]
+    cache_dir = tmp_path
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache = np.zeros((1, 6, 9, 4, 4), dtype=np.uint8)
+    for g in range(3):
+        cache[0, :, g * 3:(g + 1) * 3] = g
+    np.save(cache_dir / "train.s00of01_cache.npy", cache)
+    np.save(cache_dir / "train.s00of01_mask.npy", np.ones((1, 6), dtype=np.float32))
+    pd.DataFrame({"StudyInstanceUID": study_ids}).to_csv(
+        cache_dir / "train.s00of01_studies.csv", index=False
+    )
+
+    ds = SlotCacheDataset(cache_dir, ["train.s00of01"], _labels_df(study_ids), expand_groups=True)
+    images, mask, _ = ds[0]
+
+    for s in range(6):
+        for g in range(SLOT_CACHE_N_GROUPS):
+            pseudo = s * SLOT_CACHE_N_GROUPS + g
+            assert torch.allclose(images[pseudo], torch.full((3, 4, 4), g / 255.0)), (s, g)
+    assert torch.equal(mask, torch.ones(6 * SLOT_CACHE_N_GROUPS))
+
+
+def test_expand_groups_replicates_a_partial_mask(tmp_path):
+    study_ids = ["s0"]
+    cache_dir = tmp_path
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache = np.zeros((1, 6, 9, 4, 4), dtype=np.uint8)
+    np.save(cache_dir / "train.s00of01_cache.npy", cache)
+    partial_mask = np.array([[1.0, 0.0, 1.0, 1.0, 0.0, 1.0]], dtype=np.float32)
+    np.save(cache_dir / "train.s00of01_mask.npy", partial_mask)
+    pd.DataFrame({"StudyInstanceUID": study_ids}).to_csv(
+        cache_dir / "train.s00of01_studies.csv", index=False
+    )
+
+    ds = SlotCacheDataset(cache_dir, ["train.s00of01"], _labels_df(study_ids), expand_groups=True)
+    _, mask, _ = ds[0]
+
+    assert torch.equal(mask, torch.from_numpy(np.repeat(partial_mask[0], SLOT_CACHE_N_GROUPS)))
+
+
+def test_expand_groups_true_with_non_default_group_index_raises(tmp_path):
+    study_ids = ["s0"]
+    _write_shard(tmp_path, "train.s00of01", study_ids)
+
+    with pytest.raises(ValueError):
+        SlotCacheDataset(tmp_path, ["train.s00of01"], _labels_df(study_ids),
+                          expand_groups=True, group_index=0)
+
+
+def test_expand_groups_false_default_still_returns_a2_v1s_exact_shape(tmp_path):
+    # expand_groups defaults to False -- A2 v1's exact (6, 3, H, W) shape
+    # must be unaffected by this parameter existing at all.
+    study_ids = ["s0", "s1", "s2"]
+    _write_shard(tmp_path, "train.s00of01", study_ids)
+    ds = SlotCacheDataset(tmp_path, ["train.s00of01"], _labels_df(study_ids))
+
+    images, mask, _ = ds[0]
+
+    assert images.shape == (6, 3, 4, 4)
+    assert mask.shape == (6,)

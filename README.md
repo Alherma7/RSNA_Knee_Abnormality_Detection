@@ -139,6 +139,55 @@ notebooks going forward, one per plan item.
   slot-attention architecture generalizes to hidden data. Still a gap to
   public top scores (0.89–0.95+, see Current plan above), but the
   biggest jump of any single step so far.
+- **A2 v2** (multi-group slot attention): A2 v1's pooled 4-fold CV found
+  5 findings clustered at 0.61–0.66, well below the other 7 (0.79–0.88).
+  A 2026-08-28 investigation (live Kaggle forum, public notebooks, two
+  purpose-built visual diagnostics run on Kaggle) narrowed this to A3's
+  cache sampling 3 anchor groups per slot but A2 v1 using only the
+  centre one (`group_index=1`) — full design/evidence/gate:
+  `docs/superpowers/specs/2026-08-28-a2v2-multigroup-slot-attention-design.md`.
+  Replaced centre-only with all 3 anchor groups on all 6 slots (18
+  pseudo-slots, `expand_slot_groups()`) — needed **zero**
+  `src/model.py` changes (`n_slots` was already a plain constructor
+  parameter), only a new data-layer reshape. Two-tier real gate, both
+  run on Kaggle: **fold-0 pilot** (`notebooks/09v1_a2v2_multigroup_baseline.ipynb`,
+  0.7956 gold macro vs. A2 v1's 0.7689 fold-0 baseline — macro check
+  passed, but the paired `medial_meniscus_tear`/`lateral_meniscus_tear`
+  directional read was inconclusive: +0.1392 vs. -0.0005) → user chose
+  to scale to the remaining 3 folds anyway (an explicit judgement call,
+  not automatic) → **pooled 4-fold gate**
+  (`notebooks/10v1_a2v2_pooled_4fold_cv.ipynb`, fold 0 reused via
+  checkpoint, folds 1-3 trained fresh): **pooled gold macro-AUC 0.8009**
+  — beats A2 v1's pooled 0.7512 baseline by **+0.0497**, and all 4/4
+  weak-cluster findings moved concordantly positive (`mcl_injury`
+  0.6145→0.6599, `oa_lateral_compartment` 0.6325→0.7969 — the largest
+  mover, and the finding with no fold-0 baseline at all,
+  `medial_meniscus_tear` 0.6635→0.7007, `lateral_meniscus_tear`
+  0.6584→0.6907 — the one whose fold-0 read was flat, resolved once
+  pooled). Both spec section 5.2 checks passed clearly, not marginally
+  → **graduated**: `src/features.py::expand_slot_groups()` and
+  `src/dataset.py::SlotCacheDataset`'s new `expand_groups=True`
+  parameter (default `False`, A2 v1's exact behaviour unaffected), plus
+  the unit tests spec section 6 called for. **New A2 v2 baseline going
+  forward: 0.8009 pooled gold macro-AUC.**
+- **A2 v2 submission pipeline** (`notebooks/11v1_a2v2_submission_inference.ipynb`):
+  ports A4 (`07v1`, real LB 0.834 with A2 v1's 6-slot checkpoints) to
+  ensemble the 4 new A2 v2 checkpoints instead. `decode_study_slots()`
+  now keeps all 3 anchor groups per slot (previously discarded 2 of 3
+  after normalization) and reshapes via a hand-kept
+  `expand_slot_groups()` before the model call — normalization math
+  itself unchanged from `07v1`. Section 2's validation gate now compares
+  the full 3-group decode against the pre-built cache (strictly harder
+  than `07v1`'s centre-only check) and still matched **13/15 (86.7%)**
+  gold studies bit-for-bit — essentially unchanged from `07v1`'s own 87%
+  despite comparing 3x the pixels, real evidence the port introduced no
+  regression (both mismatches are the same `lat=unknown` residual
+  category as `07v1`'s, diffs spread evenly across all 3 groups rather
+  than concentrated in a way a group-order bug would produce). Submitted
+  to the real competition 2026-08-29: **real leaderboard 0.849** — up
+  from A2 v1/A4's 0.834 (+0.015), confirming the local pooled-CV gain
+  (0.7512→0.8009) replicates on real hidden test data, not just the
+  58-gold local gate. **New real LB baseline: 0.849.**
 
 ## Next steps
 
@@ -147,14 +196,20 @@ notebooks going forward, one per plan item.
       artifacts.
 - [x] Get a real leaderboard number for A2 v1's architecture (A4,
       submission pipeline) — done above: **real LB 0.834**.
-- [ ] Decide: investigate the weakest pooled findings (`mcl_injury`
-      0.6145, `synovitis` 0.6559), or start Tier B items — drop
-      `pos_weight`, EMA at 0.997, re-open augmentation, checkpoint/rank
-      ensembling, RadImageNet domain pretraining (not backbone size —
-      measured null, see the artifact), compartment-aware attention
-      (deferred in A2 v1, needs retraining). Now backed by a real LB
-      confirmation that the current architecture generalizes well, not
-      just a local-CV number.
-- [ ] Which anchor group(s) (`select_group`'s `group_index`, fixed at 1
-      for A2 v1) to actually use is still an open sub-question — cheap
-      to revisit later, no re-preprocessing needed.
+- [x] Investigate the weakest pooled findings (`mcl_injury` 0.6145,
+      `synovitis` 0.6559) and the anchor-group question together (A2
+      v2) — done above: multi-group slot attention graduated, new
+      pooled baseline **0.8009**. `synovitis` (label-noise, not
+      architecture — see the 2026-08-28 investigation) wasn't targeted
+      by this change and moved anyway (0.6559→0.7873), plausibly a
+      side effect of more slice coverage per finding generally.
+- [x] Port A4's submission pipeline to A2 v2's 18-pseudo-slot inputs —
+      done above (`11v1`): **real LB 0.849**, new baseline.
+- [ ] Tier B items still open: drop `pos_weight`, EMA at 0.997, re-open
+      augmentation, checkpoint/rank ensembling, RadImageNet domain
+      pretraining (not backbone size — measured null, see the
+      artifact), compartment-aware attention.
+- [ ] The 224px→336px resolution fix (deferred out of A2 v2's scope,
+      needs a full A3 cache rebuild from raw DICOM) remains open — the
+      other half of the original weak-finding diagnosis, not addressed
+      by the anchor-group change.

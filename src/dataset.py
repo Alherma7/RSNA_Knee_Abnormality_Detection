@@ -16,7 +16,7 @@ from torch.utils.data import Dataset
 
 from src import config
 from src.data import load_slot_cache_shard
-from src.features import select_group
+from src.features import expand_slot_groups, select_group
 
 
 class SlotCacheDataset(Dataset):
@@ -41,10 +41,27 @@ class SlotCacheDataset(Dataset):
     notebooks/05v2_slot_attention_baseline.ipynb (A2), where this exact
     construction (real cache, real labels, 3,100 train studies) trained
     without error across 12 real epochs on Kaggle.
+
+    `expand_groups` (A2 v2, graduated 2026-08-29): when True, each item
+    is all 3 anchor groups on all 6 slots (18 pseudo-slots) via
+    src.features.expand_slot_groups(), instead of one group via
+    select_group(group_index). Default False preserves A2 v1's exact
+    behaviour byte-for-byte. `group_index` is ignored when
+    `expand_groups=True` and must be left at its default (1) — passing
+    any other value raises, since there is otherwise no way to tell
+    "not passed" from "passed as 1" apart. See
+    docs/superpowers/specs/2026-08-28-a2v2-multigroup-slot-attention-design.md
+    section 2.2.
     """
 
-    def __init__(self, cache_dir, shards, labels_df, group_index=1, study_ids=None):
+    def __init__(self, cache_dir, shards, labels_df, group_index=1, expand_groups=False, study_ids=None):
+        if expand_groups and group_index != 1:
+            raise ValueError(
+                "expand_groups=True ignores group_index; pass group_index=1 (default) or omit "
+                f"it, not group_index={group_index!r}"
+            )
         self.group_index = group_index
+        self.expand_groups = expand_groups
         caches, masks, all_study_ids, shard_of, local_idx = [], [], [], [], []
         for shard_idx, shard in enumerate(shards):
             cache, mask, ids = load_slot_cache_shard(cache_dir, shard)
@@ -82,8 +99,12 @@ class SlotCacheDataset(Dataset):
     def __getitem__(self, i):
         shard_idx, row = self.shard_of[i], self.local_idx[i]
         full = self.caches[shard_idx][row]  # (6, 9, 224, 224) uint8
-        selected = select_group(full, self.group_index)  # (6, 3, 224, 224)
+        if self.expand_groups:
+            selected, slot_mask_row = expand_slot_groups(full, self.mask[i])  # (18, 3, 224, 224), (18,)
+        else:
+            selected = select_group(full, self.group_index)  # (6, 3, 224, 224)
+            slot_mask_row = self.mask[i]
         images = torch.from_numpy(np.ascontiguousarray(selected)).float() / 255.0
-        mask = torch.from_numpy(self.mask[i])
+        mask = torch.from_numpy(slot_mask_row)
         label = torch.from_numpy(self.labels[i])
         return images, mask, label
