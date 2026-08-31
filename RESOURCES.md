@@ -685,6 +685,35 @@ or function in this repo.
   not just one person's anecdote. Heavily forked/community-built (not a
   clean from-scratch reference), and doesn't isolate RadImageNet's
   per-finding contribution on its own.
+- **starkhushi/rsna-knee-which-report-labels-should-you-train-on** (Kaggle
+  notebook, read via browser 2026-08-31, not downloaded)
+  Why: independently benchmarks the public LLM report-label tables against
+  our same 58 gold studies — `stevenleehans` v4 blend 0.893 (matches our
+  own 0.8927 almost exactly, independent confirmation our A1a′ label
+  source choice is still the best of the known public tables), v2 0.887,
+  full 0.878, `pilkwang` report_labels_v2 0.870 (the previously-unfound
+  4th published set — now confirmed worse than our current source, no
+  reason to chase it as a replacement). Also measured blending
+  `stevenleehans` v4 + `pilkwang` v2 (simple mean): macro **tied exactly**
+  with v4 alone (0.893=0.893) and actively worsens `oa_lateral_compartment`
+  (0.832→0.807) while helping `mcl_injury`/`medial_meniscus_tear` slightly
+  — not a clean win, not pursued. Confirms Synovitis's ~0.79 label-noise
+  ceiling independently (~16% of the 4,407 reports mention any synovitis
+  term in any of 9 languages checked). Its "what I would do with this"
+  section flagged a real methodological risk this project's own training
+  notebooks share — see [[feedback-checkpoint-selection-noise]].
+- **Dread Development, "RSNA Raptor Weights" discussion post**
+  (discussion/737696, read via browser 2026-08-31)
+  Why: real update from the `dreaddevelopment` notebook author above —
+  the same single-CoAtNet384-model architecture now scores **0.936-0.938
+  public LB** (up from 0.924/0.9167-gold). Also shared a real ablation:
+  94 inference "windows"/study costs ~9h for the full test set; a
+  trimmed 42-window version scores 0.930 (only ~0.006-0.008 LB behind) —
+  reinforces the 6-94%-stack-coverage lead with a stronger number, though
+  a ~0.007 gap for a 2.2x coverage cut also reads as a relatively flat
+  coverage-vs-score curve in their own stronger pipeline, tempering how
+  large an effect to expect from window width alone (see the
+  2026-08-31-a3v2-window-widening-design.md spec's own §4).
 
 ## Library books (Desktop/LIBROS/)
 
