@@ -188,6 +188,18 @@ notebooks going forward, one per plan item.
   from A2 v1/A4's 0.834 (+0.015), confirming the local pooled-CV gain
   (0.7512→0.8009) replicates on real hidden test data, not just the
   58-gold local gate. **New real LB baseline: 0.849.**
+- **Checkpoint ensembling probe** (`notebooks/12v1_ensemble_gold_validation.ipynb`,
+  negative result): blended A2 v1's 4 fold checkpoints with A2 v2's 4
+  (per-study, each architecture's own OOF fold checkpoint only — not an
+  8-way blend), inference-only, no retraining, scored on the 58 gold
+  studies. Best variant (`weighted_70_30_toward_a2v2`) reached 0.8047 vs.
+  A2 v2 alone's 0.8009 — **+0.0038, roughly 1/13th this project's own
+  ~0.03 pooled-macro noise floor**, and the per-finding pattern doesn't
+  match a real ensembling mechanism (biggest gain on `acl_injury`, an
+  already-strong finding; biggest losses on `oa_lateral_compartment` and
+  `synovitis`, the two findings independently flagged elsewhere as this
+  pipeline's most volatile/noisiest). **Not ported to the submission
+  pipeline, no submission spent.**
 
 ## Next steps
 
@@ -205,10 +217,11 @@ notebooks going forward, one per plan item.
       side effect of more slice coverage per finding generally.
 - [x] Port A4's submission pipeline to A2 v2's 18-pseudo-slot inputs —
       done above (`11v1`): **real LB 0.849**, new baseline.
+- [x] Checkpoint/rank ensembling (A2 v1 + A2 v2 blend) — tried, negative
+      result, see above (`12v1`). Not pursued further.
 - [ ] Tier B items still open: drop `pos_weight`, EMA at 0.997, re-open
-      augmentation, checkpoint/rank ensembling, RadImageNet domain
-      pretraining (not backbone size — measured null, see the
-      artifact), compartment-aware attention.
+      augmentation, RadImageNet domain pretraining (not backbone size —
+      measured null, see the artifact), compartment-aware attention.
 - [ ] The 224px→336px resolution fix (deferred out of A2 v2's scope,
       needs a full A3 cache rebuild from raw DICOM) remains open — the
       other half of the original weak-finding diagnosis, not addressed
