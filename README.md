@@ -200,6 +200,29 @@ notebooks going forward, one per plan item.
   `synovitis`, the two findings independently flagged elsewhere as this
   pipeline's most volatile/noisiest). **Not ported to the submission
   pipeline, no submission spent.**
+- **A3 v2 window-widening pilot** (`notebooks/13v1_a3v2_window_cache_build.ipynb`
+  + `notebooks/14v1_a2v3_window_only_fold0_pilot.ipynb`, inconclusive —
+  not adopted): rebuilt the A3 pixel cache using the reference kernel's
+  own wider per-plane `PLANE_WINDOW` defaults (Sagittal/Axial 0.10-0.90,
+  Coronal 0.15-0.85) instead of the pinned narrow `RSNA_WINDOW=0.35,0.65`,
+  everything else (18-pseudo-slot architecture, hyperparameters)
+  unchanged from A2 v2. `13v1`'s cache build: both pre-build gates clean
+  (fingerprint diff showed only the intended `window` field change,
+  probe rate 7.0 slot-series/s inside the healthy range), 8/8 shards, 0
+  decode failures. `14v1`'s fold-0 pilot, dual best-epoch/SWA checkpoint
+  tracking applied for the first time
+  (`feedback_checkpoint_selection_noise.md`): best-epoch gold macro-AUC
+  **0.7726** vs. A2 v2's fold-0 baseline 0.7956 (delta -0.0230, within
+  the ±0.03 noise tolerance — macro check passed), SWA gold macro
+  **0.7677** (selection-noise gap between the two: +0.0049, this
+  project's first real on-data measurement of that gap). Per the
+  pre-agreed I4 gate (macro passes AND at least one of
+  medial/lateral meniscus tear clears a ~0.10 delta): `medial_meniscus_tear`
+  0.4028 (delta -0.1942, worse), `lateral_meniscus_tear` 0.7121 (delta
+  +0.0601, positive but under the bar) — neither cleared it;
+  `mcl_injury` (+0.1000) reported as context only, not gating.
+  **DECISION: STOP — inconclusive, not disproved.** Not scaled to 4
+  folds, nothing graduated to `src/`.
 
 ## Next steps
 
@@ -219,10 +242,17 @@ notebooks going forward, one per plan item.
       done above (`11v1`): **real LB 0.849**, new baseline.
 - [x] Checkpoint/rank ensembling (A2 v1 + A2 v2 blend) — tried, negative
       result, see above (`12v1`). Not pursued further.
+- [x] `RSNA_WINDOW` widening (A3 v2/A2 v3) — tried, see above
+      (`13v1`/`14v1`): inconclusive, not adopted, not scaled to 4 folds.
 - [ ] Tier B items still open: drop `pos_weight`, EMA at 0.997, re-open
       augmentation, RadImageNet domain pretraining (not backbone size —
       measured null, see the artifact), compartment-aware attention.
 - [ ] The 224px→336px resolution fix (deferred out of A2 v2's scope,
       needs a full A3 cache rebuild from raw DICOM) remains open — the
       other half of the original weak-finding diagnosis, not addressed
-      by the anchor-group change.
+      by the anchor-group change or the window-widening pilot.
+- [ ] ROI/spatial-attention pooling around the joint line (from
+      Berat Kirbiyik's forum ablation — masked-softmax-then-pool may be
+      losing thin/small findings to global pooling) — a more specific
+      lead for the meniscus/MCL/lateral-OA cluster than resolution or
+      window width alone.
