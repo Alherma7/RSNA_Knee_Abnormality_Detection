@@ -166,6 +166,7 @@ Source: <a href="https://github.com/Alherma7/RSNA_Knee_Abnormality_Detection">gi
   <a href="#wrong">Where we went wrong</a>
   <a href="#untried">What we never tried</a>
   <a href="#top">Vs. the top finishers</a>
+  <a href="#imaging">Deep learning on images</a>
   <a href="#lessons">Lessons</a>
   <a href="#future">Future: a late-submission rerun</a>
 </nav>
@@ -460,6 +461,62 @@ procedural:</p>
 <a href="https://www.kaggle.com/competitions/rsna-knee-abnormality-detection/writeups/33rd-place-silver-solution-no-external-data">33rd</a> ·
 <a href="https://www.kaggle.com/competitions/rsna-knee-abnormality-detection/writeups/the-hospital-is-a-variable-too">38th</a> ·
 <a href="https://www.kaggle.com/competitions/rsna-knee-abnormality-detection/writeups/49th-place-silver-solo-whole-study-2-5d-reader">49th</a>.</p>
+
+<h2 id="imaging">Deep learning on images: what transfers</h2>
+<p>The technical lessons from this project and the eight write-ups, for any study made of
+several 2D series or a 3D volume (MRI, CT) with study-level labels.</p>
+
+<h3>Input geometry</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Lesson</th><th>Evidence</th></tr></thead>
+  <tbody>
+    <tr><td><b>Choose resolution from the smallest structure.</b> A <i>d</i> mm feature needs a pixel pitch of <i>d</i>/2 mm or finer, and a ViT sees one token per patch. Fix the crop in mm first, then the pixels</td><td>224 px over 130 mm ≈ 8 mm per DINOv2 token, too coarse for 1–3 mm tears. 336 px: +0.008 public (49th). 448 px: no further gain. Crops converged at 130–150 mm</td></tr>
+    <tr><td><b>Coverage before selection.</b> Read most of every stack; train on a random sample of windows, infer on the whole study</td><td>We read 3 central slices per series. Top teams read 88–96% of the stack or every slice. Whole-study inference: +0.009 on the expert set (49th)</td></tr>
+    <tr><td><b>2.5D, not 3D.</b> Three neighbouring slices as RGB through a shared 2D ImageNet backbone; neighbours chosen by mm, not by index</td><td>No top solution used a 3D network. A 3D through-plane branch added nothing (49th)</td></tr>
+    <tr><td><b>Anatomy-anchored crops.</b> Segment bone, place landmarks, crop each compartment at ~0.2 mm/px as extra series</td><td>5th: nnU-Net bone masks, +0.002–0.003 on a strong base. 22nd: femur landmarks from TotalSegmentator</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Architecture</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Lesson</th><th>Evidence</th></tr></thead>
+  <tbody>
+    <tr><td><b>Don't pool small findings away.</b> Per-finding attention over windows (attention-MIL), spatial attention pooling, feature-map cells as instances, or per-finding queries with cross-attention</td><td>A 3 mm tear is ~0.01% of a frame. 8th: spatial attention pooling; 33rd: ~12 mm cells with 3D coordinates; 7th and 49th: finding queries</td></tr>
+    <tr><td><b>Tell every token where it came from.</b> Embeddings for plane, contrast, relative depth or 3D position in mm</td><td>Used by 7th, 22nd, 33rd and 49th; lets a sagittal and a coronal window at the same spot attend to each other</td></tr>
+    <tr><td><b>Block shortcuts structurally.</b> One compartment at a time, shared weights, the other side mirrored</td><td>22nd: the only fix for lateral-from-medial OA that worked; a post-hoc correction cost −0.007</td></tr>
+    <tr><td><b>Modest CNNs over big or foundation backbones.</b> Spend effort on input and labels first</td><td>ConvNeXt-T/S, EfficientNetV2, CoAtNet won. Bigger never won (our DINOv2-S→B: null). DINOv3 only tied after tuning its own LR. In-domain SimMIM: −0.008. OAI/RadImageNet pretraining: ≤ +0.001</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Data correctness</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Lesson</th><th>Evidence</th></tr></thead>
+  <tbody>
+    <tr><td><b>Order slices by geometry.</b> Project <code>ImagePositionPatient</code> onto the slice normal</td><td>The filename/<code>SliceLocation</code> sort reversed 41 of our 58 gold studies</td></tr>
+    <tr><td><b>Series type from the header, not the name.</b> TE/TR, <code>ScanOptions</code>, inversion time, 2D/3D</td><td>22nd: 13,046 of 24,371 series had no usable name, and names that could be checked were sometimes wrong</td></tr>
+    <tr><td><b>Normalise over the same pool at train and inference</b>, and diff the live decode against the training cache before shipping</td><td>Our percentiles over 3 vs. 9 slices: diffs up to 249/255 on identical anatomy, caught by the gate</td></tr>
+    <tr><td><b>Laterality with fallbacks.</b> Tag → sagittal image position → side classifier; trust the image when they disagree</td><td>49th caught a bug that would have labelled nearly every tagless study a right knee</td></tr>
+    <tr><td><b>Augment the acquisition, respect anatomy.</b> Resolution degradation, reconstruction noise, sharpness, mild affine. No left-right flip; for sagittal, mirroring reverses slice order</td><td>Flip test-time augmentation: −0.006 (49th). Acquisition-style augmentation became 49th's parent recipe</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Training, ensembling and inference</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Lesson</th><th>Evidence</th></tr></thead>
+  <tbody>
+    <tr><td><b>Fit the GPU with known levers</b>: sampled windows, bf16 + gradient checkpointing, 1–2 studies per step with accumulation, a CNN instead of a ViT, a frozen-backbone second stage</td><td>See <a href="#wrong">the hardware wall</a>. 21st, 22nd and 49th all trained at 336–384 px with batches of 1–2 studies</td></tr>
+    <tr><td><b>Ensemble different views, not seeds.</b> Per-plane models, crop models, different labels; blend per finding on ranks</td><td>22nd: seed or backbone swaps correlated > 0.95 with the base and moved nothing; plane and crop models did. 7th: four same-pipeline models added +0.001</td></tr>
+    <tr><td><b>Engineer inference against the clock.</b> Decode once and share across models; a time guard per stage; per-file DICOM decoding in try/except with offline decoders</td><td>5th: shared decoding saved 42% of GPU time. 21st: a three-crop submission timed out on the hidden set</td></tr>
+  </tbody>
+</table>
+</div>
 
 <h2 id="lessons">Lessons</h2>
 
