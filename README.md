@@ -6,6 +6,12 @@ small subset of officially-labeled ("gold") studies plus the rest
 labeled only from free-text radiology reports. Metric: **macro
 ROC-AUC** (unweighted mean of the 12 per-finding AUCs).
 
+**Final result (competition closed 2026-10-22):** private 0.837 / public
+0.849, rank #4958 of 6,425. Retrospective — what worked, where we went
+wrong, what the winners did and lessons for next time:
+[alherma7.github.io/RSNA_Knee_Abnormality_Detection](https://alherma7.github.io/RSNA_Knee_Abnormality_Detection/)
+(source: `docs/index.html`).
+
 See `RESOURCES.md` for every technique's source, and the linked plan
 below for full phase-by-phase detail and sourcing.
 
