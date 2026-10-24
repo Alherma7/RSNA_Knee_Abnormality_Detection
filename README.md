@@ -6,14 +6,16 @@ small subset of officially-labeled ("gold") studies plus the rest
 labeled only from free-text radiology reports. Metric: **macro
 ROC-AUC** (unweighted mean of the 12 per-finding AUCs).
 
-**Final result (competition closed 2026-10-22):** private 0.837 / public
+**Status: closed (competition ended 2026-10-22; last experiment 2026-09-01).**
+
+**Final result:** private 0.837 / public
 0.849, rank #4958 of 6,425. Retrospective — what worked, where we went
 wrong, what the winners did and lessons for next time:
 [alherma7.github.io/RSNA_Knee_Abnormality_Detection](https://alherma7.github.io/RSNA_Knee_Abnormality_Detection/)
 (source: `docs/index.html`).
 
-See `RESOURCES.md` for every technique's source, and the linked plan
-below for full phase-by-phase detail and sourcing.
+See `RESOURCES.md` for every technique's source. The sections below are
+the project's working log, kept as it stood at close.
 
 Working convention: code is validated in `notebooks/` before moving to
 `src/`. No `src/` function is considered done until it has: (a) a
@@ -29,7 +31,7 @@ has a `Report` column but `test.csv` does not — text only exists at
 train time. Direct consequence: report text is a training-label source
 (weak supervision), never a model input at inference.
 
-## Current plan (2026-08-25 reorientation)
+## Plan as of 2026-08-25 (historical)
 
 After the original Fase-numbered roadmap reached real leaderboard 0.596
 (see History below) against public top scores of 0.89–0.95+, the plan
@@ -230,7 +232,14 @@ notebooks going forward, one per plan item.
   **DECISION: STOP — inconclusive, not disproved.** Not scaled to 4
   folds, nothing graduated to `src/`.
 
-## Next steps
+## Open at close
+
+The project stopped on 2026-09-01, when the next experiment (a 336px
+cache rebuild) projected over the free T4's VRAM. Items still unchecked
+below were never run. The retrospective compares each with what the
+winners did and lays out a late-submission rerun plan
+([Future section](https://alherma7.github.io/RSNA_Knee_Abnormality_Detection/#future)).
+
 
 - [x] Scale A2 from 1 fold to the full 4-fold CV — done above, resolved
       the `medial_meniscus_tear`/`oa_lateral_compartment` fold-0
